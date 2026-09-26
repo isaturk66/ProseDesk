@@ -42,8 +42,9 @@ To uninstall the command later: `npm unlink -g prosedesk`.
 Go to the folder you're writing in and run:
 
 ```sh
-prosedesk                 # open this folder; pick a document in the editor
+prosedesk                 # open this folder and pick a document
 prosedesk essay.html      # open (or create) essay.html in this folder
+prosedesk week3/essay     # a document in a subfolder (the workspace stays here)
 prosedesk ../other-project # open another folder
 ```
 
@@ -61,7 +62,7 @@ Try it on the bundled example: `npm run example`.
 
 ### The folder is the workspace
 
-The editor lists the `.html` documents in the folder. The built-in Claude session starts **in that folder**, just like running `claude` there. Everything else in the folder is reference material Claude can read:
+The editor works with the `.html` documents in the folder and its subfolders. The built-in Claude session starts **in that folder**, just like running `claude` there. Everything else in the folder is reference material Claude can read:
 
 ```
 my-article/
@@ -90,10 +91,22 @@ Open the **History** tab next to the chat and click a version. It appears as tra
 
 The history lives in a hidden `.prosedesk/` folder inside your documents folder. It's a separate git repository, so it never interferes with a git repo of your own. It ignores itself, so it won't show up in your `git status`. Delete the folder to delete the history; your documents aren't affected. Change the interval with `PROSEDESK_AUTOSAVE_SECONDS`.
 
+### Finding documents
+
+Click the path at the top left (or press **Ctrl+P**) to open the file explorer:
+
+- **Search.** Start typing to fuzzy-search every document in every subfolder (`dr2` finds `week2/drafts/draft2`).
+- **Browse.** A folder tree with your recent documents at the top. Folders without documents are hidden unless you tick **Show all files**, which also lists reference files like PDFs.
+- **Create.** Type a name that doesn't exist and press Enter. Use `/` for subfolders (`week4/intro`); missing folders are created. **+ New document** starts a name in the selected folder.
+- **Keyboard.** ↑/↓ to move, Enter to open, ←/→ to collapse and expand folders, Esc to close.
+
+When you run `prosedesk` without a file name, the explorer opens first. Nothing is created until you ask for it.
+
 ### Keyboard shortcuts
 
 | Keys | Action |
 | --- | --- |
+| Ctrl+P | Open the file explorer |
 | Ctrl+K | Inline request on the selection (or the current paragraph). Enter = edit, Ctrl+Enter = ask |
 | Ctrl+L | Jump to the chat box |
 | Ctrl+S | Save (it also autosaves) |

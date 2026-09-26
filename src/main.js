@@ -3,6 +3,7 @@ import { marked } from 'marked'
 import { makeExtensions, attachKey } from './extensions.js'
 import { buildMerged, topBlocks } from './diff.js'
 import { attachMic, setDictationConfig, isRecording, stopRecording } from './dictation.js'
+import { createExplorer } from './explorer.js'
 import './style.css'
 
 const $ = s => document.querySelector(s)
@@ -37,6 +38,8 @@ const editor = new Editor({
 
 // A second, invisible editor that normalizes any HTML through the same schema,
 // so the diff compares like with like.
+editor.setEditable(false, false)   // until a document is open
+
 const normEditor = new Editor({ element: document.createElement('div'), extensions: makeExtensions({ placeholder: false }) })
 function normalize(html) {
   normEditor.commands.setContent(html || '<p></p>', { emitUpdate: false })
@@ -454,6 +457,10 @@ window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey
   if (mod && e.key.toLowerCase() === 'k' && editor.isFocused) { e.preventDefault(); openCmdK() }
   if (mod && e.key.toLowerCase() === 'l') { e.preventDefault(); $('#chatInput').focus() }
+  if (mod && (e.key.toLowerCase() === 'p' || e.key.toLowerCase() === 'o')) {
+    e.preventDefault()
+    if (explorer.isOpen) explorer.close(); else explorer.open()
+  }
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save() }
   if (pending && e.target === document.body && !mod) {
     if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); goto(1) }
@@ -639,42 +646,44 @@ function showTab(tab) {
 document.querySelectorAll('#sideTabs button').forEach(b => { b.onclick = () => showTab(b.dataset.tab) })
 
 // ------------------------------------------------------------------ files
-const fileSelect = $('#fileSelect')
-fileSelect.onchange = () => { save(); wsSend({ type: 'open', name: fileSelect.value }) }
-$('#newDocBtn').onclick = () => {
-  $('#newDocBtn').classList.add('hidden')
-  const i = $('#newDocInput')
-  i.classList.remove('hidden')
-  i.value = ''
-  i.focus()
-}
-$('#newDocInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.value.trim()) { save(); wsSend({ type: 'open', name: e.target.value.trim() }) }
-  if (e.key === 'Enter' || e.key === 'Escape') { e.target.classList.add('hidden'); $('#newDocBtn').classList.remove('hidden') }
+const explorer = createExplorer({
+  onOpen(path, create) {
+    if (pending) { explorer.error('Finish reviewing the current changes first.'); return }
+    save()
+    wsSend({ type: 'open', name: path, create })
+  },
 })
-$('#newDocInput').addEventListener('blur', e => { e.target.classList.add('hidden'); $('#newDocBtn').classList.remove('hidden') })
+$('#crumb').onclick = () => explorer.open()
 $('#printBtn').onclick = () => window.print()
 
 let folder = ''
-function onFiles({ files, current, folder: dir, transcribe }) {
+let folderLabel = ''
+function onFiles({ entries, truncated, current, folder: dir, transcribe }) {
   folder = dir
+  folderLabel = dir.split(/[\\/]/).filter(Boolean).pop() || dir
   setDictationConfig({ transcribe })
-  const name = dir.split(/[\\/]/).filter(Boolean).pop() || dir
-  $('#folderName').textContent = name
-  $('#folderName').title = `${dir}\n\nClaude works in this folder and can read the files in it.`
-  fileSelect.innerHTML = files.map(f => `<option value="${f}">${f.replace(/\.html?$/i, '')}</option>`).join('')
-  if (current) fileSelect.value = current
-  else {
-    const last = store.get(`prosedesk.lastDoc.${folder}`, '')
-    wsSend({ type: 'open', name: files.includes(last) ? last : files[0] || 'untitled' })
-  }
+  explorer.setFolder(dir, folderLabel)
+  explorer.setEntries(entries, truncated)
+  updateCrumb()
+  // Nothing open yet (e.g. `prosedesk` without a file name): let the user pick.
+  if (!current && !docName && !explorer.isOpen) explorer.open({ closable: false })
+}
+
+function updateCrumb() {
+  const crumb = $('#crumb')
+  crumb.querySelector('.crumb-folder').textContent = folderLabel
+  const dir = docName?.includes('/') ? docName.slice(0, docName.lastIndexOf('/')) : ''
+  crumb.querySelector('.crumb-path').textContent = dir ? ` / ${dir.replaceAll('/', ' / ')}` : ''
+  crumb.querySelector('.crumb-doc').textContent = docName ? ` / ${docName.split('/').pop().replace(/\.html?$/i, '')}` : ' / Open a document…'
+  crumb.title = `${folder}\nClaude works in this folder and can read the files in it.\n\nOpen or create a document (Ctrl+P)`
+  document.title = docName ? `${docName.split('/').pop().replace(/\.html?$/i, '')} — ProseDesk` : `${folderLabel} — ProseDesk`
 }
 
 function onDoc({ name, html }) {
   docName = name
-  store.set(`prosedesk.lastDoc.${folder}`, name)
-  fileSelect.value = name
-  document.title = `${name.replace(/\.html?$/i, '')} — ProseDesk`
+  explorer.setCurrent(name)
+  explorer.close(true)
+  updateCrumb()
   pending = false
   review = null
   editor.setEditable(true, false)
@@ -708,6 +717,7 @@ function connect() {
         if (msg.name === docName || !docName) { historyState = msg; renderHistory() }
         break
       case 'history-version': if (msg.name === docName) startRestore(msg); break
+      case 'open-error': explorer.open({ closable: !!docName }); explorer.error(msg.error); break
       case 'chat-meta': $('#modelName').textContent = msg.model || ''; break
       case 'chat-block': newSegment(); break
       case 'chat-delta': appendDelta(msg.text); break

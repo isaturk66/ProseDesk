@@ -155,8 +155,11 @@ if (target) {
   const abs = path.resolve(target)
   if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) DOCS = abs
   else {
-    DOCS = path.dirname(abs)
-    initialDoc = path.basename(abs).replace(/\.html?$/i, '') + (/\.htm$/i.test(abs) ? '.htm' : '.html')
+    // A file inside the current folder keeps the current folder as the workspace
+    // (so `prosedesk week3/essay` still sees everything); anything else uses its own folder.
+    const file = /\.html?$/i.test(abs) ? abs : abs + '.html'
+    if (!file.startsWith(DOCS + path.sep)) DOCS = path.dirname(file)
+    initialDoc = path.relative(DOCS, file).replaceAll('\\', '/')
   }
 }
 if (!fs.existsSync(DOCS)) { console.error(`Folder not found: ${DOCS}`); process.exit(1) }
@@ -242,7 +245,7 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/api/open?') && req.method === 'POST') {
     // Used when `prosedesk file.html` hands a document to an already running instance.
     const name = safeName(new URL(req.url, 'http://x').searchParams.get('name'))
-    if (name) { openDoc(name); broadcast(filesMsg()) }
+    if (name) { openDoc(name, { create: true }); broadcast(filesMsg()) }
     res.writeHead(name ? 204 : 400)
     return res.end()
   }
@@ -305,17 +308,58 @@ async function transcribe(req, res) {
 }
 
 // ---------------------------------------------------------------- documents
-let current = null        // file name of the open document
+let current = null        // path of the open document, relative to DOCS with "/" separators
 let lastKnown = ''        // last content we wrote or already forwarded (echo guard)
 
 const isDoc = f => /\.html?$/i.test(f)
-const listFiles = () => fs.readdirSync(DOCS).filter(isDoc).sort((a, b) => a.localeCompare(b))
-const filesMsg = () => ({ type: 'files', files: listFiles(), current, folder: DOCS, transcribe: !!openaiKey() })
+const SKIP_DIRS = new Set(['node_modules', '__pycache__', 'venv', '.venv'])
+const TREE_LIMIT = 10000
 
+// Every file and folder under DOCS (hidden folders and dependency folders skipped),
+// for the file explorer. Documents are marked so the explorer can focus on them.
+function listTree() {
+  const entries = []
+  const walk = (dir, depth) => {
+    let items
+    try { items = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of items) {
+      if (entries.length >= TREE_LIMIT) return
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue
+      const full = path.join(dir, e.name)
+      const rel = path.relative(DOCS, full).replaceAll('\\', '/')
+      if (e.isDirectory()) {
+        entries.push({ path: rel, dir: true })
+        if (depth < 12) walk(full, depth + 1)
+      } else if (e.isFile()) {
+        let mtime = 0
+        try { mtime = fs.statSync(full).mtimeMs } catch {}
+        entries.push({ path: rel, doc: isDoc(e.name), mtime })
+      }
+    }
+  }
+  walk(DOCS, 0)
+  return entries
+}
+
+const filesMsg = (entries = listTree()) => ({
+  type: 'files',
+  entries,
+  truncated: entries.length >= TREE_LIMIT,
+  current,
+  folder: DOCS,
+  transcribe: !!openaiKey(),
+})
+
+// A document path from the client or the command line: relative, inside DOCS,
+// with an .html/.htm extension. Returns null for anything that escapes the folder.
 const safeName = name => {
-  const n = String(name || '').trim().replace(/[\\/:*?"<>|]/g, '')
-  if (!n.replace(/\.html?$/i, '')) return null
-  return isDoc(n) ? n : n + '.html'
+  let n = String(name || '').trim().replaceAll('\\', '/').replace(/^\/+/, '')
+  n = n.split('/').map(s => s.trim()).filter(Boolean).join('/')
+  if (!n || /[:*?"<>|]/.test(n) || n.split('/').some(s => s === '..' || s === '.')) return null
+  if (!n.replace(/\.html?$/i, '').split('/').pop()) return null
+  if (!isDoc(n)) n += '.html'
+  const full = path.resolve(DOCS, n)
+  return full.startsWith(path.resolve(DOCS) + path.sep) ? n : null
 }
 
 // ---------------------------------------------------------------- history
@@ -341,21 +385,35 @@ function scheduleAutosave() {
   if (!autoTimer) autoTimer = setTimeout(() => snapshot('Autosave'), AUTOSAVE_MS)
 }
 
-function openDoc(name) {
-  if (current && current !== name && autoTimer) snapshot('Autosave')
+// Opens a document; creates it only when asked to (a new document from the explorer,
+// or a file name given on the command line). Returns false if it doesn't exist.
+function openDoc(name, { create = false } = {}) {
   const file = path.join(DOCS, name)
-  if (!fs.existsSync(file)) fs.writeFileSync(file, '<p></p>\n')
+  if (!fs.existsSync(file)) {
+    if (!create) return false
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, '<p></p>\n')
+  }
+  if (current && current !== name && autoTimer) snapshot('Autosave')
   current = name
   lastKnown = fs.readFileSync(file, 'utf8')
   history.snapshot(name, lastKnown, 'Opened')
   broadcast({ type: 'doc', name, html: lastKnown })
   broadcast(historyMsg())
+  return true
 }
 
 let watchTimer = null
-fs.watch(DOCS, (_event, filename) => {
-  if (filename && isDoc(filename) && filename !== current) broadcast(filesMsg())
-  if (!current || (filename && filename !== current)) return
+let treeTimer = null
+fs.watch(DOCS, { recursive: true }, (_event, filename) => {
+  const rel = filename ? String(filename).replaceAll('\\', '/') : null
+  // Our own history writes, and hidden or dependency folders, are not the user's files.
+  if (rel && rel.split('/').some(s => s.startsWith('.') || SKIP_DIRS.has(s))) return
+  if (rel !== current) {
+    clearTimeout(treeTimer)
+    treeTimer = setTimeout(() => broadcast(filesMsg()), 300)
+  }
+  if (!current || (rel && rel !== current)) return
   clearTimeout(watchTimer)
   watchTimer = setTimeout(() => {
     let content
@@ -513,7 +571,10 @@ wss.on('connection', ws => {
     switch (msg.type) {
       case 'open': {
         const name = safeName(msg.name)
-        if (name) openDoc(name)
+        if (!name || !openDoc(name, { create: !!msg.create })) {
+          send(ws, { type: 'open-error', name: msg.name, error: name ? 'That document no longer exists.' : 'Not a valid document name.' })
+          break
+        }
         broadcast(filesMsg())
         break
       }
@@ -547,7 +608,10 @@ wss.on('connection', ws => {
 })
 
 // ---------------------------------------------------------------- start
-if (initialDoc) openDoc(initialDoc)
+if (initialDoc) {
+  const name = safeName(initialDoc)
+  if (name) openDoc(name, { create: true })
+}
 
 function listen(port) {
   return new Promise((resolve, reject) => {
