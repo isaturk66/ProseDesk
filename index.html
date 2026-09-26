@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ProseDesk</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%233b5bdb%27/%3E%3Cpath d=%27M9 23V9h7a4.5 4.5 0 0 1 0 9H9%27 fill=%27none%27 stroke=%27white%27 stroke-width=%273%27/%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ProseDesk</div>
+    <span id="folderName" class="folder"></span>
+    <select id="fileSelect" title="Open document"></select>
+    <button id="newDocBtn" class="ghost" title="New document">+ New</button>
+    <input id="newDocInput" class="hidden" placeholder="Document name, then Enter" />
+    <span id="saveStatus" class="muted"></span>
+    <span class="spacer"></span>
+    <span id="wordCount" class="muted"></span>
+    <button id="printBtn" class="ghost" title="Print or save as PDF">Print / PDF</button>
+  </header>
+
+  <div class="toolbar" id="toolbar"></div>
+
+  <main class="workspace">
+    <div class="doc-area" id="docArea">
+      <div class="page" id="page"><div id="editor"></div></div>
+    </div>
+
+    <aside class="chat">
+      <div class="chat-head">
+        <span class="chat-title">Claude</span>
+        <div class="mode" id="modeToggle">
+          <button data-mode="edit" title="Claude edits the document; you review the tracked changes">Edit</button>
+          <button data-mode="ask" title="Claude only answers; the document is not touched">Ask</button>
+        </div>
+        <button id="newChatBtn" class="ghost small" title="Start a new conversation">New chat</button>
+      </div>
+      <div class="messages" id="messages">
+        <div class="hint">
+          Highlight text and ask about it here, or press <kbd>Ctrl</kbd>+<kbd>K</kbd> in the document for a quick inline edit.<br><br>
+          <b>Edit</b>: Claude changes the document and you accept or reject each change.<br>
+          <b>Ask</b>: Claude only answers.
+        </div>
+      </div>
+      <div class="composer">
+        <div id="selChip" class="sel-chip hidden"><span class="sel-text"></span><button title="Detach selection">×</button></div>
+        <textarea id="chatInput" rows="3" placeholder="Ask Claude…  (Enter to send, Shift+Enter for new line)"></textarea>
+        <div class="composer-row">
+          <span id="modelName" class="muted small"></span>
+          <button id="sendBtn" class="primary">Send</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="reviewBar" class="review-bar hidden">
+    <span class="review-count"></span>
+    <button id="prevChange" class="ghost" title="Previous change">‹</button>
+    <button id="nextChange" class="ghost" title="Next change">›</button>
+    <button id="rejectAll" class="danger">Reject all</button>
+    <button id="acceptAll" class="primary">Accept all</button>
+  </div>
+
+  <div id="changePop" class="change-pop hidden">
+    <button class="accept" title="Accept">✓ Accept</button>
+    <button class="reject" title="Reject">✕ Reject</button>
+  </div>
+
+  <div id="cmdk" class="cmdk hidden">
+    <input placeholder="Edit selection…" />
+    <div class="cmdk-hint"><kbd>Enter</kbd> edit · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> ask · <kbd>Esc</kbd> close</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

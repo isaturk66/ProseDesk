@@ -1,0 +1,38 @@
+{
+  "name": "prosedesk",
+  "version": "0.1.0",
+  "description": "A Word-style editor with Claude Code built in. Claude edits your document as tracked changes you accept or reject.",
+  "type": "module",
+  "bin": {
+    "prosedesk": "server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "example": "node server.mjs examples"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "editor",
+    "writing",
+    "tiptap",
+    "track-changes"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-highlight": "^3.31.3",
+    "@tiptap/extension-text-align": "^3.31.3",
+    "@tiptap/extension-text-style": "^3.31.3",
+    "@tiptap/extensions": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
+    "diff": "^9.0.0",
+    "marked": "^18.0.14",
+    "vite": "^8.3.1",
+    "ws": "^8.21.3"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+.playwright-mcp/
+.prosedesk/
+*.log
+.DS_Store
