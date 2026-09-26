@@ -10,7 +10,7 @@ export const isRecording = button => active?.button === button && active.state =
 export function stopRecording() { if (active?.state === 'rec') active.stop() }
 
 export function attachMic(button, getTarget) {
-  button.innerHTML = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg><span class="mic-time"></span>`
+  button.innerHTML = `<svg class="mic-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg><span class="mic-spin"></span><canvas class="mic-wave"></canvas><span class="mic-time"></span>`
   setState(button, 'idle')
   button.addEventListener('mousedown', e => e.preventDefault())   // keep focus in the text box
   button.addEventListener('click', () => {
@@ -36,6 +36,55 @@ function startTimer(button) {
   }
   tick()
   return setInterval(tick, 500)
+}
+
+// Tiny scrolling level meter drawn from the live mic stream, so you can see the
+// mic is actually picking you up. Returns a function that stops it.
+function startMeter(button, stream) {
+  const canvas = button.querySelector('.mic-wave')
+  const g = canvas.getContext('2d')
+  const BARS = 12, BAR = 2, GAP = 1, W = BARS * (BAR + GAP) - GAP, H = 16
+  const dpr = window.devicePixelRatio || 1
+  canvas.width = W * dpr
+  canvas.height = H * dpr
+  canvas.style.width = `${W}px`
+  canvas.style.height = `${H}px`
+
+  const ac = new AudioContext()
+  const source = ac.createMediaStreamSource(stream)
+  const analyser = ac.createAnalyser()
+  analyser.fftSize = 512
+  source.connect(analyser)
+  const samples = new Float32Array(analyser.fftSize)
+  const levels = new Array(BARS).fill(0)
+  let raf = 0, last = 0
+
+  const draw = t => {
+    raf = requestAnimationFrame(draw)
+    if (t - last < 60) return
+    last = t
+    analyser.getFloatTimeDomainData(samples)
+    let sum = 0
+    for (const v of samples) sum += v * v
+    const rms = Math.sqrt(sum / samples.length)
+    levels.push(Math.min(1, rms * 6) ** 0.6)   // boost quiet speech so it's visible
+    levels.shift()
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, W, H)
+    g.fillStyle = getComputedStyle(button).color
+    levels.forEach((l, i) => {
+      const h = Math.max(2, l * H)
+      g.fillRect(i * (BAR + GAP), (H - h) / 2, BAR, h)
+    })
+  }
+  raf = requestAnimationFrame(draw)
+
+  return () => {
+    cancelAnimationFrame(raf)
+    source.disconnect()
+    ac.close()
+    g.clearRect(0, 0, canvas.width, canvas.height)
+  }
 }
 
 function insert(el, text) {
@@ -78,9 +127,11 @@ async function recordForServer(button, el) {
   let cancelled = false
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
   const timer = startTimer(button)
+  const stopMeter = startMeter(button, stream)
 
   rec.onstop = async () => {
     clearInterval(timer)
+    stopMeter()
     stream.getTracks().forEach(t => t.stop())
     if (cancelled || !chunks.length) { setState(button, 'idle'); active = null; return }
     setState(button, 'busy')
@@ -103,9 +154,16 @@ async function recordForServer(button, el) {
 }
 
 // ---------------------------------------------------------------- browser fallback
-function browserSpeech(button, el) {
+async function browserSpeech(button, el) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition
   if (!SR) { toast(button, 'Dictation needs an OpenAI key in .env, or Chrome / Edge.'); return }
+  // Speech recognition doesn't expose its audio, so open the mic separately for the meter.
+  let stopMeter = () => {}
+  let stream = null
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    stopMeter = startMeter(button, stream)
+  } catch {}
   const r = new SR()
   r.continuous = true
   r.interimResults = false
@@ -118,6 +176,8 @@ function browserSpeech(button, el) {
   const timer = startTimer(button)
   r.onend = () => {
     clearInterval(timer)
+    stopMeter()
+    stream?.getTracks().forEach(t => t.stop())
     if (active?.button === button) active = null
     setState(button, 'idle')
   }

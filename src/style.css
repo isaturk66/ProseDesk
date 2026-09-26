@@ -380,3 +380,18 @@ button.mic[data-state="busy"] { color: var(--accent); cursor: progress; animatio
   box-shadow: 0 6px 20px rgba(0,0,0,.2);
   z-index: 50;
 }
+button.mic .mic-spin, button.mic .mic-wave { display: none; }
+button.mic[data-state="rec"] .mic-icon { display: none; }
+button.mic[data-state="rec"] .mic-wave { display: block; }
+button.mic[data-state="busy"] { animation: none; }
+button.mic[data-state="busy"] .mic-icon { display: none; }
+button.mic[data-state="busy"] .mic-spin {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(59,91,219,.2);
+  border-top-color: var(--accent);
+  animation: mic-spin .8s linear infinite;
+}
+@keyframes mic-spin { to { transform: rotate(360deg); } }
