@@ -28,7 +28,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
 
   prosedesk              open the current folder
   prosedesk essay.html   open (or create) essay.html in the current folder
-  prosedesk ../course    open another folder
+  prosedesk ../notes     open another folder
 
 Options:
   --no-open      don't open the browser

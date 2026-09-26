@@ -13,7 +13,7 @@ Most AI coding tools are built to take a task and run with it. Writing needs the
 - **Ctrl+K inline requests.** Select text, press Ctrl+K, type what you want, done.
 - **Edit mode and Ask mode.** Edit lets Claude change the document. Ask only answers and never touches your text.
 - **Tracked-change review.** Accept or reject each change, or all at once. Nothing reaches your document without your approval.
-- **Folder = workspace.** Run `prosedesk` in a folder and Claude works there, so it can read your assignment brief, readings, notes and PDFs.
+- **Folder = workspace.** Run `prosedesk` in a folder and Claude works there, so it can read your notes, sources and PDFs.
 - **Plain files.** Documents are `.html` files on disk. Claude edits them with its normal tools, and you can also edit them from a terminal Claude Code session.
 - **Dictation.** A mic button in the chat and the Ctrl+K box: press, talk, press again. It uses OpenAI's transcription if you add a key, otherwise the browser's built-in speech recognition.
 - **Runs on your Claude Code login.** No Anthropic API key. It uses your existing Claude Code subscription, settings and usage limits.
@@ -42,7 +42,7 @@ Go to the folder you're writing in and run:
 ```sh
 prosedesk                 # open this folder; pick a document in the editor
 prosedesk essay.html      # open (or create) essay.html in this folder
-prosedesk ../other-course # open another folder
+prosedesk ../other-project # open another folder
 ```
 
 Your browser opens the editor. Stop it with Ctrl+C in the terminal.
@@ -54,19 +54,18 @@ Try it on the bundled example: `npm run example`.
 The editor lists the `.html` documents in the folder. The built-in Claude session starts **in that folder**, just like running `claude` there. Everything else in the folder is reference material Claude can read:
 
 ```
-course-essay/
-├── essay.html          ← your document (shown in the editor)
-├── brief.pdf           ← assignment brief
-├── rubric.md
-├── readings/
+my-article/
+├── draft.html          ← your document (shown in the editor)
+├── brief.md            ← what the piece needs to do
+├── sources/
 │   ├── smith-2021.pdf
-│   └── notes.md
+│   └── interview-notes.md
 └── CLAUDE.md           ← optional: standing instructions for Claude
 ```
 
-At the start of each conversation Claude gets a list of the folder's files. When a question depends on them ("does this meet the brief?", "what did Smith find?"), it reads them rather than guessing, and it tells you which file it used.
+At the start of each conversation Claude gets a list of the folder's files. When a question depends on them ("does this cover the brief?", "what did Smith find?"), it reads them rather than guessing, and it tells you which file it used.
 
-A `CLAUDE.md` in the folder is picked up automatically. It's a good place for things like the course, the citation style, the word limit, or "British spelling".
+A `CLAUDE.md` in the folder is picked up automatically. It's a good place for things like the audience, the citation style, the word limit, or "British spelling".
 
 ### Keyboard shortcuts
 
@@ -148,9 +147,6 @@ Now "rewrite this" in the terminal refers to your current selection. The hook on
 - Tables and images aren't in the toolbar yet.
 - Built and tested on Windows with Chrome. It should work elsewhere, but that's untested.
 
-## A note on coursework
-
-Check your course's policy on AI assistance before you use this for assessed work. Ask mode and the review step make it easy to use Claude as an editor or a critic rather than an author, but where the line sits is up to your course.
 
 ## License
 
