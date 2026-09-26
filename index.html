@@ -47,7 +47,10 @@
         <textarea id="chatInput" rows="3" placeholder="Ask Claude…  (Enter to send, Shift+Enter for new line)"></textarea>
         <div class="composer-row">
           <span id="modelName" class="muted small"></span>
-          <button id="sendBtn" class="primary">Send</button>
+          <div class="composer-actions">
+            <button id="chatMic" class="mic" type="button"></button>
+            <button id="sendBtn" class="primary">Send</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -67,7 +70,10 @@
   </div>
 
   <div id="cmdk" class="cmdk hidden">
-    <input placeholder="Edit selection…" />
+    <div class="cmdk-row">
+      <input placeholder="Edit selection…" />
+      <button id="cmdkMic" class="mic" type="button"></button>
+    </div>
     <div class="cmdk-hint"><kbd>Enter</kbd> edit · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> ask · <kbd>Esc</kbd> close</div>
   </div>
 

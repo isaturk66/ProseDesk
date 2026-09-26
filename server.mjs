@@ -41,6 +41,8 @@ Options:
 // Used as a UserPromptSubmit hook in a terminal Claude Code session: tells it what
 // is highlighted in the ProseDesk editor opened on the same folder.
 if (argv.includes('--hook')) {
+  // The built-in chat already sends the selection itself.
+  if (process.env.PROSEDESK_EMBEDDED) process.exit(0)
   try {
     const sel = JSON.parse(fs.readFileSync(SELECTION_FILE, 'utf8'))
     const here = process.env.CLAUDE_PROJECT_DIR || process.cwd()
@@ -83,11 +85,64 @@ const vite = await createVite({
   logLevel: 'warn',
   server: { middlewareMode: true, hmr: false },
 })
-const server = http.createServer((req, res) => vite.middlewares(req, res))
+const server = http.createServer((req, res) => {
+  if (req.url === '/api/transcribe' && req.method === 'POST') return transcribe(req, res)
+  vite.middlewares(req, res)
+})
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 const send = (ws, msg) => ws.readyState === 1 && ws.send(JSON.stringify(msg))
 const broadcast = msg => wss.clients.forEach(ws => send(ws, msg))
+
+// ---------------------------------------------------------------- dictation
+// Settings live in .env next to server.mjs. It is re-read on every request, so a
+// newly pasted key works after a page reload, without restarting.
+function readEnv() {
+  const env = {}
+  try {
+    for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i)
+      if (m) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2')
+    }
+  } catch {}
+  return env
+}
+const openaiKey = () => readEnv().OPENAI_API_KEY || process.env.OPENAI_API_KEY || ''
+
+async function transcribe(req, res) {
+  const reply = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
+  const key = openaiKey()
+  if (!key) return reply(400, { error: 'No OPENAI_API_KEY in .env' })
+  const chunks = []
+  let size = 0
+  for await (const c of req) {
+    size += c.length
+    if (size > 25e6) return reply(413, { error: 'Recording is too long (25 MB limit).' })
+    chunks.push(c)
+  }
+  const type = req.headers['content-type'] || 'audio/webm'
+  const ext = type.includes('mp4') ? 'mp4' : type.includes('ogg') ? 'ogg' : 'webm'
+  const env = readEnv()
+  const { fetch, FormData, ProxyAgent } = await import('undici')
+  const form = new FormData()
+  form.append('file', new Blob([Buffer.concat(chunks)], { type }), `dictation.${ext}`)
+  form.append('model', env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe')
+  // OpenAI is not available in every region; route through a proxy if one is set.
+  const proxy = env.OPENAI_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy
+  try {
+    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+      ...(proxy ? { dispatcher: new ProxyAgent(proxy) } : {}),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return reply(r.status, { error: data.error?.message || `OpenAI error ${r.status}` })
+    reply(200, { text: data.text || '' })
+  } catch (err) {
+    reply(502, { error: `Could not reach OpenAI: ${err.message}` })
+  }
+}
 
 // ---------------------------------------------------------------- documents
 let current = null        // file name of the open document
@@ -95,7 +150,7 @@ let lastKnown = ''        // last content we wrote or already forwarded (echo gu
 
 const isDoc = f => /\.html?$/i.test(f)
 const listFiles = () => fs.readdirSync(DOCS).filter(isDoc).sort((a, b) => a.localeCompare(b))
-const filesMsg = () => ({ type: 'files', files: listFiles(), current, folder: DOCS })
+const filesMsg = () => ({ type: 'files', files: listFiles(), current, folder: DOCS, transcribe: !!openaiKey() })
 
 const safeName = name => {
   const n = String(name || '').trim().replace(/[\\/:*?"<>|]/g, '')
@@ -163,7 +218,6 @@ function startClaude() {
     '--tools', 'Read,Edit,Write,Glob,Grep',
     '--permission-mode', 'acceptEdits',
     '--strict-mcp-config',
-    '--setting-sources', 'project',
     '--append-system-prompt-file', path.join(ROOT, 'prompt.md'),
   ]
   if (MODEL) args.push('--model', MODEL)

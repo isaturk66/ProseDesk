@@ -3,3 +3,4 @@ node_modules/
 .prosedesk/
 *.log
 .DS_Store
+.env

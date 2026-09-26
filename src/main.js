@@ -2,6 +2,7 @@ import { Editor } from '@tiptap/core'
 import { marked } from 'marked'
 import { makeExtensions, attachKey } from './extensions.js'
 import { buildMerged, topBlocks } from './diff.js'
+import { attachMic, setDictationConfig, isRecording, stopRecording } from './dictation.js'
 import './style.css'
 
 const $ = s => document.querySelector(s)
@@ -344,6 +345,8 @@ $('#sendBtn').onclick = () => {
 $('#chatInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
+    // Enter while dictating just stops the mic; send once the text is in.
+    if (isRecording($('#chatMic'))) return stopRecording()
     if (sendChat(e.target.value)) e.target.value = ''
   }
 })
@@ -387,10 +390,16 @@ cmdkInput.addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.preventDefault(); closeCmdK() }
   if (e.key === 'Enter') {
     e.preventDefault()
+    if (isRecording($('#cmdkMic'))) return stopRecording()
     if (sendChat(cmdkInput.value, e.ctrlKey || e.metaKey ? 'ask' : 'edit', cmdkSel)) closeCmdK(false)
   }
 })
-cmdkInput.addEventListener('blur', () => setTimeout(() => closeCmdK(false), 100))
+cmdkInput.addEventListener('blur', () => setTimeout(() => {
+  if (!isRecording($('#cmdkMic')) && $('#cmdkMic').dataset.state !== 'busy') closeCmdK(false)
+}, 100))
+
+attachMic($('#chatMic'), () => $('#chatInput'))
+attachMic($('#cmdkMic'), () => cmdkInput)
 
 window.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey
@@ -527,8 +536,9 @@ $('#newDocInput').addEventListener('blur', e => { e.target.classList.add('hidden
 $('#printBtn').onclick = () => window.print()
 
 let folder = ''
-function onFiles({ files, current, folder: dir }) {
+function onFiles({ files, current, folder: dir, transcribe }) {
   folder = dir
+  setDictationConfig({ transcribe })
   const name = dir.split(/[\\/]/).filter(Boolean).pop() || dir
   $('#folderName').textContent = name
   $('#folderName').title = `${dir}\n\nClaude works in this folder and can read the files in it.`

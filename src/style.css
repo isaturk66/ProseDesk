@@ -345,3 +345,38 @@ body.reviewing .ProseMirror { caret-color: transparent; }
   .ProseMirror { min-height: 0; }
   .ProseMirror .attached-sel { background: none; }
 }
+
+/* ------------------------------------------------ dictation */
+.composer-actions { display: flex; align-items: center; gap: 6px; }
+.cmdk-row { display: flex; align-items: center; padding-right: 6px; }
+.cmdk-row input { flex: 1; }
+button.mic {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 16px;
+}
+button.mic:hover { background: #eef0f3; color: var(--text); }
+button.mic .mic-time { font-size: 12px; font-variant-numeric: tabular-nums; }
+button.mic .mic-time:empty { display: none; }
+button.mic[data-state="rec"] { background: var(--del); color: #fff; animation: mic-pulse 1.6s ease-in-out infinite; }
+button.mic[data-state="busy"] { color: var(--accent); cursor: progress; animation: pulse 1s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 5px rgba(207,34,46,.18); } }
+.mic-toast {
+  position: fixed;
+  max-width: 320px;
+  padding: 8px 12px;
+  background: #1f2328;
+  color: #fff;
+  font-size: 12.5px;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.2);
+  z-index: 50;
+}

@@ -15,12 +15,14 @@ Most AI coding tools are built to take a task and run with it. Writing needs the
 - **Tracked-change review.** Accept or reject each change, or all at once. Nothing reaches your document without your approval.
 - **Folder = workspace.** Run `prosedesk` in a folder and Claude works there, so it can read your assignment brief, readings, notes and PDFs.
 - **Plain files.** Documents are `.html` files on disk. Claude edits them with its normal tools, and you can also edit them from a terminal Claude Code session.
-- **Runs on your Claude Code login.** No API key. It uses your existing Claude Code subscription and usage limits.
+- **Dictation.** A mic button in the chat and the Ctrl+K box: press, talk, press again. It uses OpenAI's transcription if you add a key, otherwise the browser's built-in speech recognition.
+- **Runs on your Claude Code login.** No Anthropic API key. It uses your existing Claude Code subscription, settings and usage limits.
 
 ## Requirements
 
 - [Node.js](https://nodejs.org) 20 or newer
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and logged in (the `claude` command works in your terminal)
+- Optional: an [OpenAI API key](https://platform.openai.com/api-keys) for high-quality dictation
 
 ## Install
 
@@ -78,6 +80,20 @@ A `CLAUDE.md` in the folder is picked up automatically. It's a good place for th
 
 Click any change to get Accept / Reject buttons. The bar at the bottom has Accept all and Reject all.
 
+### Dictation
+
+Click the mic next to **Send** (or inside the Ctrl+K box), talk, and click it again to stop. The text is inserted where your cursor is, so you can edit it before sending. Pressing Enter while recording also stops it.
+
+For the best results, add an OpenAI key. Copy `.env.example` to `.env` in the ProseDesk folder and fill it in:
+
+```sh
+OPENAI_API_KEY=sk-...
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe   # or gpt-4o-mini-transcribe (cheaper)
+OPENAI_PROXY=                               # optional: http://host:port if OpenAI isn't available in your region
+```
+
+The file is read on every request, so a new key works after a page reload. Without a key, the mic falls back to the browser's own speech recognition (Chrome and Edge), which is free but less accurate, especially with punctuation or mixed languages.
+
 ### Options
 
 ```
@@ -119,7 +135,7 @@ Now "rewrite this" in the terminal refers to your current selection. The hook on
     essay.html ◄──── file watcher ────► local server (Node)
 ```
 
-- **Server** (`server.mjs`). Serves the editor, watches the folder, and runs `claude -p` in streaming JSON mode as one ongoing conversation. Claude gets file tools only (Read, Edit, Write, Glob, Grep). It has no shell, and edits are auto-approved because you review them in the editor anyway.
+- **Server** (`server.mjs`). Serves the editor, watches the folder, and runs `claude -p` in streaming JSON mode as one ongoing conversation. Claude loads your normal Claude Code settings but gets file tools only (Read, Edit, Write, Glob, Grep). It has no shell and no MCP servers, and edits are auto-approved because you review them in the editor anyway.
 - **Editor** (`src/`). Built on [TipTap](https://tiptap.dev) / ProseMirror. When the file changes on disk, the editor compares it with your last accepted version (`src/diff.js`). Unchanged paragraphs are matched and edited ones are paired by similarity, then diffed word by word. The result is rendered with insertion and deletion marks. Accepting or rejecting a change edits those marks, and once everything is resolved the result is saved back to the file.
 - **Instructions** (`prompt.md`). Appended to Claude's system prompt: make small targeted edits, keep the user's voice, don't invent sources, and in Ask mode never edit.
 
