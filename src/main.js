@@ -652,6 +652,7 @@ const explorer = createExplorer({
     save()
     wsSend({ type: 'open', name: path, create })
   },
+  onMkdir(path) { wsSend({ type: 'mkdir', path }) },
 })
 $('#crumb').onclick = () => explorer.open()
 $('#printBtn').onclick = () => window.print()
@@ -717,7 +718,11 @@ function connect() {
         if (msg.name === docName || !docName) { historyState = msg; renderHistory() }
         break
       case 'history-version': if (msg.name === docName) startRestore(msg); break
-      case 'open-error': explorer.open({ closable: !!docName }); explorer.error(msg.error); break
+      case 'open-error':
+        if (!explorer.isOpen) explorer.open({ closable: !!docName })
+        explorer.error(msg.error)
+        break
+      case 'mkdir-done': explorer.folderCreated(msg.path); break
       case 'chat-meta': $('#modelName').textContent = msg.model || ''; break
       case 'chat-block': newSegment(); break
       case 'chat-delta': appendDelta(msg.text); break

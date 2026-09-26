@@ -77,7 +77,7 @@ function pathLabel(r) {
   return `${dir ? `<span class="ex-dir">${highlight(dir, hits)}</span>` : ''}${highlight(file, hits, cut)}`
 }
 
-export function createExplorer({ onOpen }) {
+export function createExplorer({ onOpen, onMkdir }) {
   const root = $('#explorer')
   const input = root.querySelector('.ex-search')
   const list = root.querySelector('.ex-list')
@@ -92,6 +92,7 @@ export function createExplorer({ onOpen }) {
   let sel = -1
   let expanded = new Set()
   let showAll = false
+  let folderMode = false      // the input is naming a new folder rather than searching
 
   const docs = () => entries.filter(e => e.doc)
   const recents = () => store.get(`prosedesk.recent.${folderKey}`, []).filter(p => entries.some(e => e.path === p))
@@ -114,6 +115,16 @@ export function createExplorer({ onOpen }) {
   function buildRows() {
     const q = input.value.trim()
     const out = []
+    const folderName = q.replace(/\/+$/, '')
+    if (folderMode || (q.endsWith('/') && folderName)) {
+      if (folderMode && (!q || q.endsWith('/'))) {
+        return [{ kind: 'hint', label: `Type the new folder's name${folderName ? ` (inside ${folderName})` : ''}. Use / to nest folders.` }]
+      }
+      const exists = entries.some(e => e.dir && e.path.toLowerCase() === folderName.toLowerCase())
+      return exists
+        ? [{ kind: 'folder', path: folderName, depth: 0, open: expanded.has(folderName) }, { kind: 'hint', label: 'That folder already exists.' }]
+        : [{ kind: 'mkdir', path: folderName, depth: 0 }]
+    }
     if (q) {
       const pool = entries.filter(e => !e.dir && (e.doc || showAll))
       const scored = []
@@ -143,10 +154,13 @@ export function createExplorer({ onOpen }) {
       out.push({ kind: 'header', label: folderName || 'Files' })
     }
 
+    // Hide folders that only hold non-document files (e.g. readings full of PDFs),
+    // but keep empty folders visible: they're usually new and waiting for documents.
     const withDocs = docFolders()
+    const nonEmpty = new Set(entries.map(e => dirName(e.path)))
     const children = new Map()
     for (const e of entries) {
-      if (e.dir && !showAll && !withDocs.has(e.path)) continue
+      if (e.dir && !showAll && !withDocs.has(e.path) && nonEmpty.has(e.path)) continue
       if (!e.dir && !e.doc && !showAll) continue
       const parent = dirName(e.path)
       if (!children.has(parent)) children.set(parent, [])
@@ -169,7 +183,7 @@ export function createExplorer({ onOpen }) {
     return out
   }
 
-  const selectable = r => r && r.kind !== 'header' && r.kind !== 'empty'
+  const selectable = r => r && r.kind !== 'header' && r.kind !== 'empty' && r.kind !== 'hint'
 
   function render(keepPath) {
     const prev = keepPath ?? rows[sel]?.path
@@ -182,6 +196,11 @@ export function createExplorer({ onOpen }) {
     list.innerHTML = rows.map((r, i) => {
       if (r.kind === 'header') return `<div class="ex-header">${esc(r.label)}</div>`
       if (r.kind === 'empty') return `<div class="ex-empty">No documents here yet. Type a name above and press Enter to create one.</div>`
+      if (r.kind === 'hint') return `<div class="ex-empty">${esc(r.label)}</div>`
+      if (r.kind === 'mkdir') {
+        return `<div class="ex-row create ${i === sel ? 'sel' : ''}" data-i="${i}" style="padding-left:12px"><span class="ex-icon">${ICON.plus}</span>
+          <span class="ex-name">New folder <b>${esc(r.path)}</b></span><span class="ex-meta">Enter</span></div>`
+      }
       const pad = `style="padding-left:${12 + r.depth * 18}px"`
       const cls = ['ex-row', r.kind, i === sel ? 'sel' : '', r.path === current ? 'current' : ''].join(' ')
       if (r.kind === 'create') {
@@ -224,6 +243,20 @@ export function createExplorer({ onOpen }) {
     if (r.kind === 'folder') return toggleFolder(r.path)
     if (r.kind === 'doc') { onOpen(r.path, false); return }
     if (r.kind === 'create') { onOpen(r.path, true); return }
+    if (r.kind === 'mkdir') { onMkdir(r.path); return }
+  }
+
+  function exitFolderMode() {
+    folderMode = false
+    input.placeholder = 'Search documents…'
+  }
+
+  // Pre-fills the input with the folder of the selected row, so new things land
+  // next to what you're looking at.
+  function selectedFolder() {
+    const r = rows[sel]
+    if (r?.kind === 'folder') return r.path
+    return r?.path && !r.recent && r.kind !== 'create' && r.kind !== 'mkdir' ? dirName(r.path) : ''
   }
 
   input.addEventListener('input', () => render())
@@ -232,7 +265,10 @@ export function createExplorer({ onOpen }) {
     if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
     else if (e.key === 'Enter') { e.preventDefault(); activate(r) }
-    else if (e.key === 'Escape') { e.preventDefault(); if (input.value) { input.value = ''; render() } else close() }
+    else if (e.key === 'Escape') {
+      e.preventDefault()
+      if (folderMode || input.value) { exitFolderMode(); input.value = ''; render() } else close()
+    }
     else if (e.key === 'ArrowRight' && !input.value && r?.kind === 'folder') { e.preventDefault(); toggleFolder(r.path, true) }
     else if (e.key === 'ArrowLeft' && !input.value && r) {
       e.preventDefault()
@@ -254,11 +290,21 @@ export function createExplorer({ onOpen }) {
     input.focus()
   })
   root.querySelector('.ex-new').addEventListener('click', () => {
-    // Start a new document in the folder of the selected row.
-    const r = rows[sel]
-    const dir = r?.kind === 'folder' ? r.path : r?.path && !r.recent ? dirName(r.path) : ''
+    const dir = selectedFolder()
+    exitFolderMode()
     input.value = dir ? dir + '/' : ''
     input.placeholder = 'Name the new document, then Enter'
+    // A trailing "/" would read as "new folder"; wait for the name instead.
+    rows = [{ kind: 'hint', label: `New document${dir ? ` in ${dir}` : ''}: type its name and press Enter.` }]
+    sel = -1
+    list.innerHTML = `<div class="ex-empty">${esc(rows[0].label)}</div>`
+    input.focus()
+  })
+  root.querySelector('.ex-newfolder').addEventListener('click', () => {
+    const dir = selectedFolder()
+    folderMode = true
+    input.value = dir ? dir + '/' : ''
+    input.placeholder = 'Name the new folder, then Enter'
     render()
     input.focus()
   })
@@ -269,7 +315,7 @@ export function createExplorer({ onOpen }) {
     root.classList.toggle('locked', !closable)
     root.classList.remove('hidden')
     input.value = ''
-    input.placeholder = 'Search documents…'
+    exitFolderMode()
     render(current || recents()[0])
     input.focus()
   }
@@ -306,6 +352,16 @@ export function createExplorer({ onOpen }) {
       let d = dirName(p)
       while (d) { expanded.add(d); d = dirName(d) }
       store.set(`prosedesk.expanded.${folderKey}`, [...expanded])
+    },
+    // After the server made a folder: show it, selected, ready for "+ New document".
+    folderCreated(p) {
+      let d = p
+      while (d) { expanded.add(d); d = dirName(d) }
+      store.set(`prosedesk.expanded.${folderKey}`, [...expanded])
+      exitFolderMode()
+      input.value = ''
+      render(p)
+      input.focus()
     },
     error(message) {
       list.insertAdjacentHTML('afterbegin', `<div class="ex-error">${esc(message)}</div>`)

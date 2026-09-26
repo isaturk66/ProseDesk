@@ -352,14 +352,16 @@ const filesMsg = (entries = listTree()) => ({
 
 // A document path from the client or the command line: relative, inside DOCS,
 // with an .html/.htm extension. Returns null for anything that escapes the folder.
+const cleanPath = p => {
+  const n = String(p || '').trim().replaceAll('\\', '/').split('/').map(s => s.trim()).filter(Boolean).join('/')
+  if (!n || /[:*?"<>|]/.test(n) || n.split('/').some(s => s === '..' || s === '.' || s.startsWith('.'))) return null
+  return path.resolve(DOCS, n).startsWith(path.resolve(DOCS) + path.sep) ? n : null
+}
 const safeName = name => {
-  let n = String(name || '').trim().replaceAll('\\', '/').replace(/^\/+/, '')
-  n = n.split('/').map(s => s.trim()).filter(Boolean).join('/')
-  if (!n || /[:*?"<>|]/.test(n) || n.split('/').some(s => s === '..' || s === '.')) return null
-  if (!n.replace(/\.html?$/i, '').split('/').pop()) return null
+  let n = cleanPath(name)
+  if (!n || !n.replace(/\.html?$/i, '').split('/').pop()) return null
   if (!isDoc(n)) n += '.html'
-  const full = path.resolve(DOCS, n)
-  return full.startsWith(path.resolve(DOCS) + path.sep) ? n : null
+  return n
 }
 
 // ---------------------------------------------------------------- history
@@ -584,6 +586,19 @@ wss.on('connection', ws => {
         fs.writeFileSync(path.join(DOCS, current), msg.html)
         if (msg.label) snapshot(msg.label)   // end of a review: record it right away
         else scheduleAutosave()
+        break
+      }
+      case 'mkdir': {
+        const dir = cleanPath(msg.path)
+        try {
+          if (!dir) throw new Error('Not a valid folder name.')
+          if (fs.existsSync(path.join(DOCS, dir))) throw new Error('That folder already exists.')
+          fs.mkdirSync(path.join(DOCS, dir), { recursive: true })
+          broadcast(filesMsg())
+          send(ws, { type: 'mkdir-done', path: dir })
+        } catch (err) {
+          send(ws, { type: 'open-error', error: err.message })
+        }
         break
       }
       case 'history-list': send(ws, historyMsg()); break

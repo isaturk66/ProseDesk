@@ -98,6 +98,7 @@ Click the path at the top left (or press **Ctrl+P**) to open the file explorer:
 - **Search.** Start typing to fuzzy-search every document in every subfolder (`dr2` finds `week2/drafts/draft2`).
 - **Browse.** A folder tree with your recent documents at the top. Folders without documents are hidden unless you tick **Show all files**, which also lists reference files like PDFs.
 - **Create.** Type a name that doesn't exist and press Enter. Use `/` for subfolders (`week4/intro`); missing folders are created. **+ New document** starts a name in the selected folder.
+- **Folders.** **+ New folder** creates a folder inside the selected one, or type a name ending in `/` (`week4/`) and press Enter. New, empty folders stay visible so you can fill them.
 - **Keyboard.** ↑/↓ to move, Enter to open, ←/→ to collapse and expand folders, Esc to close.
 
 When you run `prosedesk` without a file name, the explorer opens first. Nothing is created until you ask for it.
