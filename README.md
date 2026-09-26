@@ -27,8 +27,8 @@ Most AI coding tools are built to take a task and run with it. Writing needs the
 ## Install
 
 ```sh
-git clone https://github.com/isaturk66/prosedesk.git
-cd prosedesk
+git clone https://github.com/isaturk66/ProseDesk.git
+cd ProseDesk
 npm install
 npm link        # makes the `prosedesk` command available everywhere
 ```
