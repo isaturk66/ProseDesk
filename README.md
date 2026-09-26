@@ -45,7 +45,15 @@ prosedesk essay.html      # open (or create) essay.html in this folder
 prosedesk ../other-project # open another folder
 ```
 
-Your browser opens the editor. Stop it with Ctrl+C in the terminal.
+Your browser opens the editor. Stop it with Ctrl+C in the terminal, or from anywhere:
+
+```sh
+prosedesk list      # show running instances
+prosedesk stop      # stop the one for the current folder
+prosedesk stopall   # stop all of them
+```
+
+If ProseDesk is already running when you start it, it asks whether to open the running one, stop it and start fresh, or start another on a free port.
 
 Try it on the bundled example: `npm run example`.
 
@@ -104,6 +112,7 @@ prosedesk [file.html | folder] [--no-open] [--port N] [--model NAME]
 | `--model sonnet` | Model for the built-in chat (default: your Claude Code default). Also `PROSEDESK_MODEL` |
 | `--port 5200` | Port (default 5178; the next free port is used if it's taken). Also `PORT` |
 | `--no-open` | Don't open the browser |
+| `--new` | Start another instance without asking, even if one is already running |
 
 You can run several instances in different folders at the same time.
 

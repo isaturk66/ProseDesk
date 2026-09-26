@@ -12,13 +12,80 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn, exec } from 'node:child_process'
+import { spawn, exec, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const STATE_DIR = path.join(os.homedir(), '.prosedesk')
 const SELECTION_FILE = path.join(STATE_DIR, 'selection.json')
+const INSTANCES_DIR = path.join(STATE_DIR, 'instances')
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+
+// ---------------------------------------------------------------- instances
+// Every running server registers itself in ~/.prosedesk/instances/<pid>.json.
+// Before stopping anything we confirm the PID is really a ProseDesk server (its
+// command line runs server.mjs), so a stale file can never kill an unrelated
+// process that happens to reuse the PID.
+function nodeProcesses() {
+  try {
+    let out
+    if (process.platform === 'win32') {
+      const ps = '$ProgressPreference = "SilentlyContinue"; Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'
+      out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+    } else {
+      out = execFileSync('ps', ['-Ao', 'pid=,args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    }
+    return out.split(/\r?\n/).map(line => {
+      const m = line.trim().match(/^(\d+)\s+(.*)$/)
+      return m && { pid: Number(m[1]), cmd: m[2] }
+    }).filter(p => p && p.pid !== process.pid && /server\.mjs/i.test(p.cmd))
+  } catch {
+    return []
+  }
+}
+
+function runningInstances() {
+  const procs = nodeProcesses()
+  const registered = []
+  let files = []
+  try { files = fs.readdirSync(INSTANCES_DIR) } catch {}
+  for (const f of files) {
+    const file = path.join(INSTANCES_DIR, f)
+    let info = null
+    try { info = JSON.parse(fs.readFileSync(file, 'utf8')) } catch {}
+    if (info && procs.some(p => p.pid === info.pid)) registered.push(info)
+    else fs.rmSync(file, { force: true })
+  }
+  // Servers started before instances were registered.
+  const unregistered = procs
+    .filter(p => /prosedesk/i.test(p.cmd) && !registered.some(r => r.pid === p.pid))
+    .map(p => ({ pid: p.pid }))
+  return [...registered, ...unregistered]
+}
+
+function describe(i) {
+  return i.folder ? `${i.folder}  ${i.url}` : `older ProseDesk process (PID ${i.pid})`
+}
+
+async function stopInstances(list) {
+  for (const i of list) {
+    try {
+      // /T also ends the Claude Code child process on Windows.
+      if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(i.pid), '/T', '/F'], { stdio: 'ignore' })
+      else process.kill(i.pid, 'SIGTERM')
+    } catch {}
+    fs.rmSync(path.join(INSTANCES_DIR, `${i.pid}.json`), { force: true })
+  }
+  // Wait for the ports to be released.
+  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  for (let t = 0; t < 30 && list.some(i => alive(i.pid)); t++) await new Promise(r => setTimeout(r, 100))
+}
+
+function openBrowser(url) {
+  const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`
+  exec(opener)
+}
 
 // ---------------------------------------------------------------- cli
 const argv = process.argv.slice(2)
@@ -30,11 +97,34 @@ if (argv.includes('--help') || argv.includes('-h')) {
   prosedesk essay.html   open (or create) essay.html in the current folder
   prosedesk ../notes     open another folder
 
+  prosedesk list         show running instances
+  prosedesk stop         stop the instance for the current folder
+  prosedesk stopall      stop every running instance
+
 Options:
   --no-open      don't open the browser
+  --new          start a new instance without asking, even if one is running
   --port N       port to use (default 5178, next free port if taken)
   --model NAME   model for the built-in chat, e.g. sonnet or opus
   --hook         print the current editor selection (for a Claude Code hook)`)
+  process.exit(0)
+}
+
+const command = argv[0]
+if (command === 'list' || command === 'stop' || command === 'stopall') {
+  const all = runningInstances()
+  if (command === 'list') {
+    console.log(all.length ? all.map(describe).join('\n') : 'No ProseDesk instances running.')
+    process.exit(0)
+  }
+  const here = path.resolve(argv[1] || process.cwd())
+  const targets = command === 'stopall' ? all : all.filter(i => i.folder && samePath(i.folder, here))
+  if (!targets.length) {
+    console.log(command === 'stopall' ? 'No ProseDesk instances running.' : `No ProseDesk instance running for ${here}.`)
+    process.exit(0)
+  }
+  await stopInstances(targets)
+  for (const i of targets) console.log(`Stopped ${describe(i)}`)
   process.exit(0)
 }
 
@@ -74,6 +164,43 @@ const PORT = Number(flag('--port') || process.env.PORT || 5178)
 const MODEL = flag('--model') || process.env.PROSEDESK_MODEL || ''
 const OPEN = !argv.includes('--no-open')
 
+// Already running? Ask what to do instead of silently starting a second copy.
+if (!argv.includes('--new')) {
+  const running = runningInstances()
+  const same = running.find(i => i.folder && samePath(i.folder, DOCS))
+  if (running.length) {
+    let choice = same ? 'o' : 'n'
+    if (process.stdin.isTTY) {
+      console.log(`ProseDesk is already running:\n${running.map(i => '  ' + describe(i)).join('\n')}\n`)
+      const options = [
+        same && `  [o] open the one for this folder${choice === 'o' ? ' (default)' : ''}`,
+        `  [s] stop ${running.length > 1 ? 'them' : 'it'} and start fresh here`,
+        `  [n] start another one on a free port${choice === 'n' ? ' (default)' : ''}`,
+        '  [q] quit',
+      ].filter(Boolean)
+      console.log(options.join('\n'))
+      const { createInterface } = await import('node:readline/promises')
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      const answer = (await rl.question('> ')).trim().toLowerCase()
+      rl.close()
+      if (answer) choice = answer[0]
+    }
+    if (choice === 'q') process.exit(0)
+    if (choice === 'o' && same) {
+      if (initialDoc) {
+        await fetch(`${same.url}/api/open?name=${encodeURIComponent(initialDoc)}`, { method: 'POST' }).catch(() => {})
+      }
+      console.log(`Opening ${same.url}`)
+      if (OPEN) openBrowser(same.url)
+      process.exit(0)
+    }
+    if (choice === 's') {
+      await stopInstances(running)
+      console.log(`Stopped ${running.length} instance${running.length > 1 ? 's' : ''}.`)
+    }
+  }
+}
+
 // Loaded after argument handling so `--hook` stays fast.
 const { WebSocketServer } = await import('ws')
 const { createServer: createVite } = await import('vite')
@@ -83,13 +210,21 @@ const vite = await createVite({
   root: ROOT,
   appType: 'spa',
   logLevel: 'warn',
-  server: { middlewareMode: true, hmr: false },
+  server: { middlewareMode: true, hmr: false, ws: false },
 })
 const server = http.createServer((req, res) => {
   if (req.url === '/api/transcribe' && req.method === 'POST') return transcribe(req, res)
+  if (req.url.startsWith('/api/open?') && req.method === 'POST') {
+    // Used when `prosedesk file.html` hands a document to an already running instance.
+    const name = safeName(new URL(req.url, 'http://x').searchParams.get('name'))
+    if (name) { openDoc(name); broadcast(filesMsg()) }
+    res.writeHead(name ? 204 : 400)
+    return res.end()
+  }
   vite.middlewares(req, res)
 })
 const wss = new WebSocketServer({ server, path: '/ws' })
+wss.on('error', () => {})   // listen errors are handled where we pick the port
 
 const send = (ws, msg) => ws.readyState === 1 && ws.send(JSON.stringify(msg))
 const broadcast = msg => wss.clients.forEach(ws => send(ws, msg))
@@ -355,20 +490,28 @@ function listen(port) {
 let port = PORT
 for (;;) {
   try { await listen(port); break } catch (err) {
-    if (err.code !== 'EADDRINUSE' || port > PORT + 20) throw err
+    if (err.code !== 'EADDRINUSE') { console.error(`Could not start: ${err.message}`); process.exit(1) }
+    if (port >= PORT + 20) { console.error(`Ports ${PORT}-${port} are all in use. Try: prosedesk stopall`); process.exit(1) }
     port++
   }
 }
 
 const url = `http://localhost:${port}`
+const instanceFile = path.join(INSTANCES_DIR, `${process.pid}.json`)
+try {
+  fs.mkdirSync(INSTANCES_DIR, { recursive: true })
+  fs.writeFileSync(instanceFile, JSON.stringify({ pid: process.pid, port, url, folder: DOCS, started: Date.now() }))
+} catch {}
+
+if (port !== PORT) console.log(`Port ${PORT} is busy, using ${port}.`)
 console.log(`ProseDesk  ${url}`)
 console.log(`Folder     ${DOCS}`)
 console.log('Press Ctrl+C to stop.')
-if (OPEN) {
-  const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`
-  exec(opener)
-}
+if (OPEN) openBrowser(url)
 
-process.on('exit', () => proc?.kill())
+process.on('exit', () => {
+  proc?.kill()
+  try { fs.rmSync(instanceFile, { force: true }) } catch {}
+})
 process.on('SIGINT', () => process.exit())
 process.on('SIGTERM', () => process.exit())
