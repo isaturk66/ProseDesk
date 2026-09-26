@@ -28,7 +28,11 @@
 
     <aside class="chat">
       <div class="chat-head">
-        <span class="chat-title">Claude</span>
+        <div class="tabs" id="sideTabs">
+          <button data-tab="chat" class="on">Claude</button>
+          <button data-tab="history">History</button>
+        </div>
+        <span class="spacer"></span>
         <div class="mode" id="modeToggle">
           <button data-mode="edit" title="Claude edits the document; you review the tracked changes">Edit</button>
           <button data-mode="ask" title="Claude only answers; the document is not touched">Ask</button>
@@ -42,6 +46,7 @@
           <b>Ask</b>: Claude only answers.
         </div>
       </div>
+      <div class="history-view hidden" id="historyView"></div>
       <div class="composer">
         <div id="selChip" class="sel-chip hidden"><span class="sel-text"></span><button title="Detach selection">×</button></div>
         <textarea id="chatInput" rows="3" placeholder="Ask Claude…  (Enter to send, Shift+Enter for new line)"></textarea>

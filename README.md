@@ -15,6 +15,7 @@ Most AI coding tools are built to take a task and run with it. Writing needs the
 - **Tracked-change review.** Accept or reject each change, or all at once. Nothing reaches your document without your approval.
 - **Folder = workspace.** Run `prosedesk` in a folder and Claude works there, so it can read your notes, sources and PDFs.
 - **Plain files.** Documents are `.html` files on disk. Claude edits them with its normal tools, and you can also edit them from a terminal Claude Code session.
+- **Version history.** Every version is kept in a private git history: while you write, before Claude edits, and after each review. You can restore any version, all of it or just the parts you want.
 - **Dictation.** A mic button in the chat and the Ctrl+K box: press, talk, press again. It uses OpenAI's transcription if you add a key, otherwise the browser's built-in speech recognition.
 - **Runs on your Claude Code login.** No Anthropic API key. It uses your existing Claude Code subscription, settings and usage limits.
 
@@ -22,6 +23,7 @@ Most AI coding tools are built to take a task and run with it. Writing needs the
 
 - [Node.js](https://nodejs.org) 20 or newer
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and logged in (the `claude` command works in your terminal)
+- [git](https://git-scm.com), for version history (everything else works without it)
 - Optional: an [OpenAI API key](https://platform.openai.com/api-keys) for high-quality dictation
 
 ## Install
@@ -74,6 +76,19 @@ my-article/
 At the start of each conversation Claude gets a list of the folder's files. When a question depends on them ("does this cover the brief?", "what did Smith find?"), it reads them rather than guessing, and it tells you which file it used.
 
 A `CLAUDE.md` in the folder is picked up automatically. It's a good place for things like the audience, the citation style, the word limit, or "British spelling".
+
+### Version history
+
+ProseDesk keeps versions of each document:
+
+- every 30 seconds while you're writing (only when something changed)
+- right before Claude edits, labelled with your request
+- when you finish reviewing changes ("Accepted Claude's changes", "3 accepted, 1 rejected", and so on)
+- before an edit from outside the editor, such as a terminal Claude Code session
+
+Open the **History** tab next to the chat and click a version. It appears as tracked changes against your current document. **Restore all** brings the whole version back, or accept and reject individual differences to restore only some of it. Restoring is recorded too, so you can always go back.
+
+The history lives in a hidden `.prosedesk/` folder inside your documents folder. It's a separate git repository, so it never interferes with a git repo of your own. It ignores itself, so it won't show up in your `git status`. Delete the folder to delete the history; your documents aren't affected. Change the interval with `PROSEDESK_AUTOSAVE_SECONDS`.
 
 ### Keyboard shortcuts
 
@@ -143,7 +158,7 @@ Now "rewrite this" in the terminal refers to your current selection. The hook on
     essay.html ◄──── file watcher ────► local server (Node)
 ```
 
-- **Server** (`server.mjs`). Serves the editor, watches the folder, and runs `claude -p` in streaming JSON mode as one ongoing conversation. Claude loads your normal Claude Code settings but gets file tools only (Read, Edit, Write, Glob, Grep). It has no shell and no MCP servers, and edits are auto-approved because you review them in the editor anyway.
+- **Server** (`server.mjs`). Serves the editor (built into `dist/` on first run and whenever the source changes), watches the folder, keeps the version history (`history.mjs`), and runs `claude -p` in streaming JSON mode as one ongoing conversation. Claude loads your normal Claude Code settings but gets file tools only (Read, Edit, Write, Glob, Grep). It has no shell and no MCP servers, and edits are auto-approved because you review them in the editor anyway.
 - **Editor** (`src/`). Built on [TipTap](https://tiptap.dev) / ProseMirror. When the file changes on disk, the editor compares it with your last accepted version (`src/diff.js`). Unchanged paragraphs are matched and edited ones are paired by similarity, then diffed word by word. The result is rendered with insertion and deletion marks. Accepting or rejecting a change edits those marks, and once everything is resolved the result is saved back to the file.
 - **Instructions** (`prompt.md`). Appended to Claude's system prompt: make small targeted edits, keep the user's voice, don't invent sources, and in Ask mode never edit.
 

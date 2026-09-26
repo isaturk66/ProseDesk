@@ -55,10 +55,10 @@ function scheduleSave() {
   $('#saveStatus').textContent = 'Editing…'
   saveTimer = setTimeout(save, 400)
 }
-function save() {
+function save(label) {
   clearTimeout(saveTimer)
   if (pending || !docName) return
-  wsSend({ type: 'save', name: docName, html: pretty(editor.getHTML()) })
+  wsSend({ type: 'save', name: docName, html: pretty(editor.getHTML()), label })
   $('#saveStatus').textContent = 'Saved'
 }
 
@@ -68,10 +68,19 @@ function updateStatus() {
 }
 
 // ------------------------------------------------------------------ tracked changes
+// What is being reviewed: Claude's edits, or an old version being restored.
+let review = null   // { kind: 'claude' | 'restore', accepted, rejected, version }
+
 function onExternal(html) {
+  if (!pending || review?.kind !== 'claude') review = { kind: 'claude', accepted: 0, rejected: 0 }
+  propose(html)
+}
+
+// Shows `html` against the current document as tracked changes.
+function propose(html) {
   const proposed = normalize(html)
   if (!pending) { clearTimeout(saveTimer); baseline = editor.getHTML() }
-  if (proposed === baseline) { if (pending) finishReview(); return }
+  if (proposed === baseline) { if (pending) finishReview(); return false }
 
   const { html: merged, count } = buildMerged(baseline, proposed)
   if (!count) {
@@ -81,12 +90,26 @@ function onExternal(html) {
     setDoc(proposed)
     baseline = proposed
     hideReview()
-    return
+    save()
+    return true
   }
   pending = true
   editor.setEditable(false, false)
   setDoc(merged)
   showReview()
+  return true
+}
+
+function startRestore(version) {
+  if (pending) { flashReview('Finish the current review first.'); return }
+  save()
+  review = { kind: 'restore', accepted: 0, rejected: 0, version }
+  if (!propose(version.html)) {
+    review = null
+    flashHistory('That version is the same as the current document.')
+  } else {
+    goto(1)
+  }
 }
 
 function changeIds() {
@@ -101,6 +124,7 @@ function changeIds() {
 
 function resolve(cids, accept) {
   const match = c => cids === 'all' || cids.includes(c)
+  if (review) review[accept ? 'accepted' : 'rejected'] += cids === 'all' ? changeIds().length : cids.length
   const tr = editor.state.tr.setMeta('addToHistory', false)
 
   // Whole blocks first, back to front so positions stay valid.
@@ -138,16 +162,41 @@ function finishReview() {
   editor.setEditable(true, false)
   baseline = editor.getHTML()
   hideReview()
-  save()
+  save(reviewLabel())
+  review = null
+}
+
+// The history entry recorded when a review ends.
+function reviewLabel() {
+  if (!review) return undefined
+  const { kind, accepted: a, rejected: r } = review
+  if (kind === 'restore') {
+    if (!a) return undefined
+    return `${r ? 'Partly restored' : 'Restored'} the version from ${versionWhen(review.version.time)}`
+  }
+  if (!r) return "Accepted Claude's changes"
+  if (!a) return "Rejected Claude's changes"
+  return `Reviewed Claude's changes (${a} accepted, ${r} rejected)`
 }
 
 // ------------------------------------------------------------------ review UI
 let navIndex = -1
 function showReview() {
   const n = changeIds().length
-  $('#reviewBar .review-count').textContent = `Claude suggested ${n} change${n === 1 ? '' : 's'}`
+  const restoring = review?.kind === 'restore'
+  $('#reviewBar .review-count').textContent = restoring
+    ? `Restoring ${versionWhen(review.version.time)}: ${n} difference${n === 1 ? '' : 's'}`
+    : `Claude suggested ${n} change${n === 1 ? '' : 's'}`
+  $('#acceptAll').textContent = restoring ? 'Restore all' : 'Accept all'
+  $('#rejectAll').textContent = restoring ? 'Cancel' : 'Reject all'
   $('#reviewBar').classList.remove('hidden')
   document.body.classList.add('reviewing')
+}
+function flashReview(text) {
+  const el = $('#reviewBar .review-count')
+  const old = el.textContent
+  el.textContent = text
+  setTimeout(() => { if (el.textContent === text) el.textContent = old }, 2500)
 }
 function hideReview() {
   $('#reviewBar').classList.add('hidden')
@@ -518,6 +567,77 @@ function updateToolbar() {
   tb.classList.toggle('disabled', pending)
 }
 
+// ------------------------------------------------------------------ history
+let historyState = { enabled: true, items: [] }
+
+function versionWhen(time) {
+  const d = new Date(time)
+  const clock = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return `${dayLabel(d).toLowerCase()} at ${clock}`
+}
+function dayLabel(d) {
+  const today = new Date()
+  const yesterday = new Date(today.getTime() - 864e5)
+  if (d.toDateString() === today.toDateString()) return 'Today'
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' })
+}
+const versionKind = label =>
+  /^Before Claude/.test(label) ? 'claude'
+  : /Claude's changes/.test(label) ? 'review'
+  : /restored/i.test(label) ? 'restore'
+  : /^Autosave/.test(label) ? 'auto' : 'other'
+
+function renderHistory() {
+  const view = $('#historyView')
+  if (!historyState.enabled) {
+    view.innerHTML = '<div class="hint">Version history needs <b>git</b>, and it wasn\'t found on your PATH. Install git and restart ProseDesk.</div>'
+    return
+  }
+  if (!historyState.items.length) {
+    view.innerHTML = '<div class="hint">No versions yet. ProseDesk keeps a version every 30 seconds while you write, before Claude edits, and when you finish a review.</div>'
+    return
+  }
+  const intro = '<div class="hint small">Click a version to compare it with the current document. You can restore all of it or only the parts you want.</div>'
+  let html = intro
+  let lastDay = ''
+  historyState.items.forEach((item, i) => {
+    const d = new Date(item.time)
+    const day = dayLabel(d)
+    if (day !== lastDay) { html += `<div class="v-day">${day}</div>`; lastDay = day }
+    const label = item.label.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
+    html += `<button class="version ${versionKind(item.label)}" data-hash="${item.hash}">
+      <span class="v-time">${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="v-label">${label}${i === 0 ? ' <span class="v-latest">latest</span>' : ''}</span>
+    </button>`
+  })
+  view.innerHTML = html
+}
+$('#historyView').addEventListener('click', e => {
+  const btn = e.target.closest('.version')
+  if (btn) wsSend({ type: 'history-read', hash: btn.dataset.hash })
+})
+function flashHistory(text) {
+  const view = $('#historyView')
+  const note = document.createElement('div')
+  note.className = 'hint history-note'
+  note.textContent = text
+  view.prepend(note)
+  setTimeout(() => note.remove(), 3000)
+}
+
+function showTab(tab) {
+  document.querySelectorAll('#sideTabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab))
+  const chat = tab === 'chat'
+  $('#messages').classList.toggle('hidden', !chat)
+  document.querySelector('.composer').classList.toggle('hidden', !chat)
+  $('#modeToggle').classList.toggle('hidden', !chat)
+  $('#newChatBtn').classList.toggle('hidden', !chat)
+  $('#historyView').classList.toggle('hidden', chat)
+  if (!chat) { renderHistory(); wsSend({ type: 'history-list' }) }
+}
+document.querySelectorAll('#sideTabs button').forEach(b => { b.onclick = () => showTab(b.dataset.tab) })
+
 // ------------------------------------------------------------------ files
 const fileSelect = $('#fileSelect')
 fileSelect.onchange = () => { save(); wsSend({ type: 'open', name: fileSelect.value }) }
@@ -556,6 +676,7 @@ function onDoc({ name, html }) {
   fileSelect.value = name
   document.title = `${name.replace(/\.html?$/i, '')} — ProseDesk`
   pending = false
+  review = null
   editor.setEditable(true, false)
   hideReview()
   setDoc(html)
@@ -583,6 +704,10 @@ function connect() {
       case 'files': onFiles(msg); break
       case 'doc': onDoc(msg); break
       case 'external': if (msg.name === docName) onExternal(msg.html); break
+      case 'history':
+        if (msg.name === docName || !docName) { historyState = msg; renderHistory() }
+        break
+      case 'history-version': if (msg.name === docName) startRestore(msg); break
       case 'chat-meta': $('#modelName').textContent = msg.model || ''; break
       case 'chat-block': newSegment(); break
       case 'chat-delta': appendDelta(msg.text); break

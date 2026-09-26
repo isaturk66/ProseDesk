@@ -14,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, exec, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createHistory } from './history.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const STATE_DIR = path.join(os.homedir(), '.prosedesk')
@@ -203,15 +204,39 @@ if (!argv.includes('--new')) {
 
 // Loaded after argument handling so `--hook` stays fast.
 const { WebSocketServer } = await import('ws')
-const { createServer: createVite } = await import('vite')
 
 // ---------------------------------------------------------------- web + ws
-const vite = await createVite({
-  root: ROOT,
-  appType: 'spa',
-  logLevel: 'warn',
-  server: { middlewareMode: true, hmr: false, ws: false },
-})
+// The editor is built once into dist/ and served as static files. It is rebuilt
+// automatically whenever index.html or src/ is newer than the build.
+const DIST = path.join(ROOT, 'dist')
+async function ensureBuilt() {
+  const sources = ['index.html', ...fs.readdirSync(path.join(ROOT, 'src')).map(f => path.join('src', f))]
+  const newest = Math.max(...sources.map(f => fs.statSync(path.join(ROOT, f)).mtimeMs))
+  let built = 0
+  try { built = fs.statSync(path.join(DIST, 'index.html')).mtimeMs } catch {}
+  if (built >= newest) return
+  console.log('Building the editor…')
+  const { build } = await import('vite')
+  await build({ root: ROOT, logLevel: 'warn', build: { outDir: DIST, emptyOutDir: true } })
+}
+await ensureBuilt()
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.json': 'application/json',
+}
+function serveStatic(req, res) {
+  let pathname = '/'
+  try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname) } catch {}
+  const file = path.join(DIST, path.normalize(pathname === '/' ? '/index.html' : pathname))
+  if (!file.startsWith(DIST)) { res.writeHead(403); return res.end() }
+  fs.readFile(file, (err, data) => {
+    if (err) { res.writeHead(404); return res.end('Not found') }
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' })
+    res.end(data)
+  })
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/api/transcribe' && req.method === 'POST') return transcribe(req, res)
   if (req.url.startsWith('/api/open?') && req.method === 'POST') {
@@ -221,7 +246,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(name ? 204 : 400)
     return res.end()
   }
-  vite.middlewares(req, res)
+  serveStatic(req, res)
 })
 const wss = new WebSocketServer({ server, path: '/ws' })
 wss.on('error', () => {})   // listen errors are handled where we pick the port
@@ -293,12 +318,38 @@ const safeName = name => {
   return isDoc(n) ? n : n + '.html'
 }
 
+// ---------------------------------------------------------------- history
+const history = createHistory(DOCS)
+const AUTOSAVE_MS = Number(process.env.PROSEDESK_AUTOSAVE_SECONDS || 30) * 1000
+let autoTimer = null
+
+const historyMsg = () => ({
+  type: 'history',
+  name: current,
+  enabled: history.enabled,
+  items: current ? history.list(current) : [],
+})
+
+function snapshot(label) {
+  clearTimeout(autoTimer)
+  autoTimer = null
+  if (current && history.snapshot(current, lastKnown, label)) broadcast(historyMsg())
+}
+
+// While you write, keep at most one version every 30 seconds.
+function scheduleAutosave() {
+  if (!autoTimer) autoTimer = setTimeout(() => snapshot('Autosave'), AUTOSAVE_MS)
+}
+
 function openDoc(name) {
+  if (current && current !== name && autoTimer) snapshot('Autosave')
   const file = path.join(DOCS, name)
   if (!fs.existsSync(file)) fs.writeFileSync(file, '<p></p>\n')
   current = name
   lastKnown = fs.readFileSync(file, 'utf8')
+  history.snapshot(name, lastKnown, 'Opened')
   broadcast({ type: 'doc', name, html: lastKnown })
+  broadcast(historyMsg())
 }
 
 let watchTimer = null
@@ -310,6 +361,8 @@ fs.watch(DOCS, (_event, filename) => {
     let content
     try { content = fs.readFileSync(path.join(DOCS, current), 'utf8') } catch { return }
     if (content === lastKnown) return
+    // Keep the version from just before someone else (Claude, another editor) changed the file.
+    snapshot(busy ? 'Before Claude' : 'Before outside edit')
     lastKnown = content
     broadcast({ type: 'external', name: current, html: content })
   }, 150)
@@ -414,6 +467,10 @@ function handleClaudeEvent(ev) {
 
 function chat({ text, mode, selection }) {
   if (busy) return
+  if (mode !== 'ask') {
+    const short = text.replace(/\s+/g, ' ').trim()
+    snapshot(`Before Claude: ${short.length > 70 ? short.slice(0, 70) + '…' : short}`)
+  }
   if (!proc) startClaude()
   busy = true
   const lines = [`[ProseDesk] Open document: ${current || '(none)'}`]
@@ -445,7 +502,10 @@ function stopClaude(reset) {
 // ---------------------------------------------------------------- protocol
 wss.on('connection', ws => {
   send(ws, filesMsg())
-  if (current) send(ws, { type: 'doc', name: current, html: lastKnown })
+  if (current) {
+    send(ws, { type: 'doc', name: current, html: lastKnown })
+    send(ws, historyMsg())
+  }
 
   ws.on('message', raw => {
     let msg
@@ -461,6 +521,15 @@ wss.on('connection', ws => {
         if (!current || msg.name !== current) break
         lastKnown = msg.html
         fs.writeFileSync(path.join(DOCS, current), msg.html)
+        if (msg.label) snapshot(msg.label)   // end of a review: record it right away
+        else scheduleAutosave()
+        break
+      }
+      case 'history-list': send(ws, historyMsg()); break
+      case 'history-read': {
+        const item = current && history.list(current).find(i => i.hash === msg.hash)
+        const html = item && history.read(item.hash, current)
+        if (html != null) send(ws, { type: 'history-version', name: current, ...item, html })
         break
       }
       case 'selection': {
@@ -510,6 +579,7 @@ console.log('Press Ctrl+C to stop.')
 if (OPEN) openBrowser(url)
 
 process.on('exit', () => {
+  if (autoTimer) snapshot('Autosave')
   proc?.kill()
   try { fs.rmSync(instanceFile, { force: true }) } catch {}
 })
