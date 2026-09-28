@@ -335,7 +335,11 @@ function appendDelta(text) {
     scrollChat()
   })
 }
-const TOOL_LABEL = { Read: 'Reading', Edit: 'Editing', MultiEdit: 'Editing', Write: 'Writing', Glob: 'Looking for', Grep: 'Searching' }
+const TOOL_LABEL = {
+  Read: 'Reading', Edit: 'Editing', MultiEdit: 'Editing', Write: 'Writing', Glob: 'Looking for', Grep: 'Searching',
+  Bash: 'Running', PowerShell: 'Running', Agent: 'Subagent:', Task: 'Subagent:', WebSearch: 'Searching the web for',
+  WebFetch: 'Reading', Skill: 'Using skill', TodoWrite: 'Planning',
+}
 function addTool(name, target) {
   if (!turn) startTurn()
   turn.el.querySelector('.thinking')?.remove()

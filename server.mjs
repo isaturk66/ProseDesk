@@ -461,6 +461,30 @@ let outBuf = ''
 const config = { model: '', effort: '' }
 let procConfig = ''
 
+// Claude runs as the full Claude Code harness: your tools, MCP servers, skills
+// and permission rules. The one thing ProseDesk supplies is a permission mode
+// when your settings don't pick one, because `-p` can't ask for approval and
+// the default mode would refuse every edit.
+function settingsPermissionMode() {
+  const files = [
+    path.join(CLAUDE_DIR, 'settings.json'),
+    path.join(DOCS, '.claude', 'settings.json'),
+    path.join(DOCS, '.claude', 'settings.local.json'),
+  ]
+  for (const f of files) {
+    try { if (JSON.parse(fs.readFileSync(f, 'utf8')).permissions?.defaultMode) return true } catch {}
+  }
+  return false
+}
+
+// A short label for a tool call: the file it touches, or what it does.
+function toolTarget(input = {}) {
+  const file = input.file_path || input.notebook_path || input.path
+  if (file) return path.basename(String(file))
+  const t = String(input.description || input.pattern || input.query || input.url || input.command || input.skill || '')
+  return t.length > 60 ? t.slice(0, 60) + '…' : t
+}
+
 function startClaude() {
   const args = [
     '-p',
@@ -468,11 +492,10 @@ function startClaude() {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--tools', 'Read,Edit,Write,Glob,Grep',
-    '--permission-mode', 'acceptEdits',
-    '--strict-mcp-config',
     '--append-system-prompt-file', path.join(ROOT, 'prompt.md'),
   ]
+  const permissionMode = process.env.PROSEDESK_PERMISSION_MODE || (settingsPermissionMode() ? '' : 'acceptEdits')
+  if (permissionMode) args.push('--permission-mode', permissionMode)
   if (config.model || MODEL) args.push('--model', config.model || MODEL)
   if (config.effort) args.push('--effort', config.effort)
   procConfig = JSON.stringify(config)
@@ -521,11 +544,9 @@ function handleClaudeEvent(ev) {
     const e = ev.event
     if (e.type === 'content_block_start' && e.content_block?.type === 'text') broadcast({ type: 'chat-block' })
     if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') broadcast({ type: 'chat-delta', text: e.delta.text })
-  } else if (ev.type === 'assistant') {
+  } else if (ev.type === 'assistant' && !ev.parent_tool_use_id) {
     for (const c of ev.message?.content || []) {
-      if (c.type !== 'tool_use') continue
-      const target = c.input?.file_path || c.input?.pattern || c.input?.path || ''
-      broadcast({ type: 'chat-tool', name: c.name, target: path.basename(String(target)) })
+      if (c.type === 'tool_use') broadcast({ type: 'chat-tool', name: c.name, target: toolTarget(c.input) })
     }
   } else if (ev.type === 'result') {
     finishTurn(ev.is_error ? String(ev.result || ev.subtype || 'error') : null)
@@ -610,10 +631,7 @@ function readTranscript(file) {
       if (!turn) messages.push(turn = { role: 'assistant', parts: [] })
       for (const c of content) {
         if (c.type === 'text' && c.text.trim()) turn.parts.push({ text: c.text })
-        if (c.type === 'tool_use') {
-          const target = c.input?.file_path || c.input?.pattern || c.input?.path || ''
-          turn.parts.push({ tool: c.name, target: path.basename(String(target)) })
-        }
+        if (c.type === 'tool_use') turn.parts.push({ tool: c.name, target: toolTarget(c.input) })
       }
     }
   }
