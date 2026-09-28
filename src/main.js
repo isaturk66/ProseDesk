@@ -694,6 +694,74 @@ function flashHistory(text) {
   setTimeout(() => note.remove(), 3000)
 }
 
+// ------------------------------------------------------------------ past chats
+let chatSession = null   // the Claude session the chat panel is showing
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+
+function renderChats(items, current) {
+  const view = $('#chatsView')
+  if (!items) { view.innerHTML = '<div class="hint">Loading…</div>'; return }
+  if (!items.length) { view.innerHTML = '<div class="hint">No earlier chats in this folder yet.</div>'; return }
+  let html = '<div class="hint small">Click a chat to reopen it and carry on where you left off.</div>'
+  let lastDay = ''
+  for (const item of items) {
+    const d = new Date(item.time)
+    const day = dayLabel(d)
+    if (day !== lastDay) { html += `<div class="v-day">${day}</div>`; lastDay = day }
+    const title = item.title.replace(/\s+/g, ' ').trim()
+    html += `<button class="version past-chat" data-id="${esc(item.id)}">
+      <span class="v-time">${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="v-label">${esc(title.length > 120 ? title.slice(0, 120) + '…' : title || '(empty)')}
+        ${item.id === current ? ' <span class="v-latest">current</span>' : ''}
+        <span class="pc-meta">${esc(item.doc.replace(/\.html?$/i, ''))} · ${item.turns} message${item.turns === 1 ? '' : 's'}</span>
+      </span>
+    </button>`
+  }
+  view.innerHTML = html
+}
+$('#chatsView').addEventListener('click', e => {
+  const btn = e.target.closest('.past-chat')
+  if (!btn) return
+  if (busy) return flashChats('Wait for Claude to finish first.')
+  wsSend({ type: 'chat-resume', id: btn.dataset.id })
+})
+function flashChats(text) {
+  const note = document.createElement('div')
+  note.className = 'hint history-note'
+  note.textContent = text
+  $('#chatsView').prepend(note)
+  setTimeout(() => note.remove(), 3000)
+}
+
+function showTranscript({ id, messages: list }) {
+  chatSession = id
+  messages.innerHTML = ''
+  for (const m of list) {
+    if (m.role === 'user') { addUserMsg(m.text, m.quote, m.mode); continue }
+    const el = document.createElement('div')
+    el.className = 'msg assistant'
+    for (const p of m.parts) {
+      const part = document.createElement('div')
+      if (p.tool) {
+        part.className = `tool ${p.tool === 'Edit' || p.tool === 'Write' || p.tool === 'MultiEdit' ? 'edit' : ''}`
+        part.textContent = `${TOOL_LABEL[p.tool] || p.tool} ${p.target}`
+      } else {
+        part.className = 'md'
+        part.innerHTML = marked.parse(p.text)
+      }
+      el.append(part)
+    }
+    if (el.childNodes.length) messages.append(el)
+  }
+  const note = document.createElement('div')
+  note.className = 'hint'
+  note.textContent = 'Resumed this chat. Claude remembers it; carry on below.'
+  messages.append(note)
+  showTab('chat')
+  scrollChat()
+  $('#chatInput').focus()
+}
+
 function showTab(tab) {
   document.querySelectorAll('#sideTabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab))
   const chat = tab === 'chat'
@@ -701,8 +769,10 @@ function showTab(tab) {
   document.querySelector('.composer').classList.toggle('hidden', !chat)
   $('#modeToggle').classList.toggle('hidden', !chat)
   $('#newChatBtn').classList.toggle('hidden', !chat)
-  $('#historyView').classList.toggle('hidden', chat)
-  if (!chat) { renderHistory(); wsSend({ type: 'history-list' }) }
+  $('#historyView').classList.toggle('hidden', tab !== 'history')
+  $('#chatsView').classList.toggle('hidden', tab !== 'chats')
+  if (tab === 'history') { renderHistory(); wsSend({ type: 'history-list' }) }
+  if (tab === 'chats') { renderChats(null); wsSend({ type: 'chat-list' }) }
 }
 document.querySelectorAll('#sideTabs button').forEach(b => { b.onclick = () => showTab(b.dataset.tab) })
 
@@ -788,13 +858,17 @@ function connect() {
         explorer.error(msg.error)
         break
       case 'mkdir-done': explorer.folderCreated(msg.path); break
-      case 'chat-meta': modelSelect.title = `Model: ${msg.model || 'default'}`; break
+      case 'chat-meta': modelSelect.title = `Model: ${msg.model || 'default'}`; chatSession = msg.session; break
+      case 'chat-list': renderChats(msg.items, msg.current || chatSession); break
+      case 'chat-transcript': showTranscript(msg); break
+      case 'chat-resume-error': flashChats(msg.error); break
       case 'chat-config': showConfig(msg); break
       case 'chat-block': newSegment(); break
       case 'chat-delta': appendDelta(msg.text); break
       case 'chat-tool': addTool(msg.name, msg.target); break
       case 'chat-done': endTurn(msg.error, msg.stopped); break
       case 'chat-cleared':
+        chatSession = null
         messages.innerHTML = '<div class="hint">New conversation. Claude has forgotten the previous chat; the document is unchanged.</div>'
         if (busy) endTurn(null, true)
         break

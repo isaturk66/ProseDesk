@@ -32,7 +32,8 @@
       <div class="chat-head">
         <div class="tabs" id="sideTabs">
           <button data-tab="chat" class="on">Claude</button>
-          <button data-tab="history">History</button>
+          <button data-tab="chats" title="Earlier conversations with Claude in this folder">Chats</button>
+          <button data-tab="history" title="Earlier versions of this document">History</button>
         </div>
         <span class="spacer"></span>
         <div class="mode" id="modeToggle">
@@ -49,6 +50,7 @@
         </div>
       </div>
       <div class="history-view hidden" id="historyView"></div>
+      <div class="history-view hidden" id="chatsView"></div>
       <div class="composer">
         <div class="composer-grip" id="composerGrip" title="Drag to resize · double-click to reset"></div>
         <div id="selChip" class="sel-chip hidden"><span class="sel-text"></span><button title="Detach selection">×</button></div>

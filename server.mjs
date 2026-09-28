@@ -516,7 +516,7 @@ function finishTurn(error, extra = {}) {
 function handleClaudeEvent(ev) {
   if (ev.type === 'system' && ev.subtype === 'init') {
     sessionId = ev.session_id
-    broadcast({ type: 'chat-meta', model: ev.model })
+    broadcast({ type: 'chat-meta', model: ev.model, session: ev.session_id })
   } else if (ev.type === 'stream_event' && !ev.parent_tool_use_id) {
     const e = ev.event
     if (e.type === 'content_block_start' && e.content_block?.type === 'text') broadcast({ type: 'chat-block' })
@@ -559,6 +559,93 @@ function chat({ text, mode, selection }) {
   lines.push('', text)
   const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: lines.join('\n') }] } }
   proc.stdin.write(JSON.stringify(msg) + '\n')
+}
+
+// ---------------------------------------------------------------- past chats
+// Claude Code keeps each session as a .jsonl transcript under
+// ~/.claude/projects/<folder with non-alphanumerics as dashes>/. ProseDesk
+// sessions are the ones whose prompts start with the [ProseDesk] header.
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+function sessionsDir() {
+  const base = path.join(CLAUDE_DIR, 'projects')
+  const enc = DOCS.replace(/[^a-zA-Z0-9]/g, '-')
+  if (fs.existsSync(path.join(base, enc))) return path.join(base, enc)
+  // Very long folder names are cut short and given a hash suffix.
+  try {
+    const hit = enc.length > 200 && fs.readdirSync(base).find(d => d.startsWith(enc.slice(0, 200)))
+    if (hit) return path.join(base, hit)
+  } catch {}
+  return null
+}
+
+function parsePrompt(raw) {
+  if (!raw.startsWith('[ProseDesk]')) return null
+  const quote = raw.match(/^Selected text: """([\s\S]*?)"""$/m)?.[1] || ''
+  const header = raw.replace(/^Selected text: """[\s\S]*?"""$/m, '').replace(/^\(inside the paragraph: """[\s\S]*?"""\)$/m, '')
+  const cut = header.indexOf('\n\n')
+  return {
+    doc: raw.match(/^\[ProseDesk\] Open document: (.*)$/m)?.[1] || '',
+    mode: /^Mode: ASK/m.test(raw) ? 'ask' : 'edit',
+    quote,
+    text: cut >= 0 ? header.slice(cut + 2) : '',
+  }
+}
+
+function readTranscript(file) {
+  const messages = []
+  let turn = null
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    let ev
+    try { ev = JSON.parse(line) } catch { continue }
+    if (ev.isSidechain || ev.isMeta || !ev.message) continue
+    const content = typeof ev.message.content === 'string'
+      ? [{ type: 'text', text: ev.message.content }] : ev.message.content || []
+    if (ev.type === 'user') {
+      const text = content.find(c => c.type === 'text')?.text
+      const prompt = text && parsePrompt(text)
+      if (!prompt) continue   // tool results and other plumbing
+      messages.push({ role: 'user', ...prompt })
+      turn = null
+    } else if (ev.type === 'assistant') {
+      if (!turn) messages.push(turn = { role: 'assistant', parts: [] })
+      for (const c of content) {
+        if (c.type === 'text' && c.text.trim()) turn.parts.push({ text: c.text })
+        if (c.type === 'tool_use') {
+          const target = c.input?.file_path || c.input?.pattern || c.input?.path || ''
+          turn.parts.push({ tool: c.name, target: path.basename(String(target)) })
+        }
+      }
+    }
+  }
+  return messages
+}
+
+function chatList() {
+  const dir = sessionsDir()
+  if (!dir) return []
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'))
+    .map(f => ({ f, time: fs.statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time).slice(0, 100)
+  const items = []
+  for (const { f, time } of files) {
+    try {
+      const prompts = readTranscript(path.join(dir, f)).filter(m => m.role === 'user')
+      if (!prompts.length) continue
+      items.push({ id: f.slice(0, -6), time, title: prompts[0].text, doc: prompts.at(-1).doc, turns: prompts.length })
+    } catch {}
+  }
+  return items
+}
+
+function resumeChat(ws, id) {
+  const dir = sessionsDir()
+  const file = dir && /^[\w-]+$/.test(id || '') && path.join(dir, `${id}.jsonl`)
+  if (busy || !file || !fs.existsSync(file))
+    return send(ws, { type: 'chat-resume-error', error: busy ? 'Wait for Claude to finish first.' : 'That chat no longer exists.' })
+  stopClaude(true)
+  sessionId = id
+  freshSession = false
+  broadcast({ type: 'chat-transcript', id, messages: readTranscript(file) })
 }
 
 function stopClaude(reset) {
@@ -632,6 +719,8 @@ wss.on('connection', ws => {
         broadcast({ type: 'chat-config', ...config })
         break
       }
+      case 'chat-list': send(ws, { type: 'chat-list', items: chatList(), current: sessionId }); break
+      case 'chat-resume': resumeChat(ws, msg.id); break
       case 'chat-stop': stopClaude(false); break
       case 'chat-reset': stopClaude(true); broadcast({ type: 'chat-cleared' }); break
     }

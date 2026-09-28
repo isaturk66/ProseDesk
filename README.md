@@ -91,6 +91,10 @@ Open the **History** tab next to the chat and click a version. It appears as tra
 
 The history lives in a hidden `.prosedesk/` folder inside your documents folder. It's a separate git repository, so it never interferes with a git repo of your own. It ignores itself, so it won't show up in your `git status`. Delete the folder to delete the history; your documents aren't affected. Change the interval with `PROSEDESK_AUTOSAVE_SECONDS`.
 
+### Past chats
+
+The **Chats** tab lists your earlier conversations with Claude in this folder, newest first. Click one to reopen it: the conversation is shown again and Claude picks up where you left off, like `claude --resume`. **New chat** starts a fresh one; the old one stays in the list.
+
 ### Finding documents
 
 Click the path at the top left (or press **Ctrl+P**) to open the file explorer:

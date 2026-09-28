@@ -566,3 +566,7 @@ button.mic[data-state="busy"] .mic-spin {
   padding: 2px 4px; font-size: 12px; color: var(--muted); cursor: pointer; max-width: 120px;
 }
 .chat-config select:hover, .chat-config select:focus { border-color: var(--border); background: #f6f7f9; color: var(--text); outline: none; }
+
+/* ------------------------------------------------ past chats */
+.past-chat .v-label { min-width: 0; overflow-wrap: anywhere; }
+.pc-meta { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
