@@ -138,7 +138,7 @@ prosedesk [file.html | folder] [--no-open] [--port N] [--model NAME]
 
 | Option | Meaning |
 | --- | --- |
-| `--model sonnet` | Model for the built-in chat (default: your Claude Code default). Also `PROSEDESK_MODEL` |
+| `--model sonnet` | Default model for the built-in chat (default: your Claude Code default). Also `PROSEDESK_MODEL`. Model and thinking effort can also be switched from the chat panel |
 | `--port 5200` | Port (default 5178; the next free port is used if it's taken). Also `PORT` |
 | `--no-open` | Don't open the browser |
 | `--new` | Start another instance without asking, even if one is already running |

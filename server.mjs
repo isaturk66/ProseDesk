@@ -455,6 +455,11 @@ let sessionId = null
 let freshSession = true
 let busy = false
 let outBuf = ''
+// Model and effort chosen in the chat panel ('' = --model / Claude's default). The running
+// process keeps the flags it started with, so a change restarts it before the
+// next turn, resuming the same session.
+const config = { model: '', effort: '' }
+let procConfig = ''
 
 function startClaude() {
   const args = [
@@ -468,7 +473,9 @@ function startClaude() {
     '--strict-mcp-config',
     '--append-system-prompt-file', path.join(ROOT, 'prompt.md'),
   ]
-  if (MODEL) args.push('--model', MODEL)
+  if (config.model || MODEL) args.push('--model', config.model || MODEL)
+  if (config.effort) args.push('--effort', config.effort)
+  procConfig = JSON.stringify(config)
   if (sessionId) args.push('--resume', sessionId)
 
   proc = spawn('claude', args, {
@@ -531,6 +538,7 @@ function chat({ text, mode, selection }) {
     const short = text.replace(/\s+/g, ' ').trim()
     snapshot(`Before Claude: ${short.length > 70 ? short.slice(0, 70) + '…' : short}`)
   }
+  if (proc && procConfig !== JSON.stringify(config)) { proc.removeAllListeners('exit'); proc.kill(); proc = null }
   if (!proc) startClaude()
   busy = true
   const lines = [`[ProseDesk] Open document: ${current || '(none)'}`]
@@ -562,6 +570,7 @@ function stopClaude(reset) {
 // ---------------------------------------------------------------- protocol
 wss.on('connection', ws => {
   send(ws, filesMsg())
+  send(ws, { type: 'chat-config', ...config })
   if (current) {
     send(ws, { type: 'doc', name: current, html: lastKnown })
     send(ws, historyMsg())
@@ -616,6 +625,13 @@ wss.on('connection', ws => {
         break
       }
       case 'chat': chat(msg); break
+      case 'chat-config': {
+        const ok = v => typeof v === 'string' && /^[\w.\[\]-]{0,64}$/.test(v)
+        if (ok(msg.model)) config.model = msg.model
+        if (ok(msg.effort)) config.effort = msg.effort
+        broadcast({ type: 'chat-config', ...config })
+        break
+      }
       case 'chat-stop': stopClaude(false); break
       case 'chat-reset': stopClaude(true); broadcast({ type: 'chat-cleared' }); break
     }

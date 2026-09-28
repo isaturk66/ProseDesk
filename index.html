@@ -26,7 +26,9 @@
       <div class="page" id="page"><div id="editor"></div></div>
     </div>
 
-    <aside class="chat">
+    <div class="split" id="chatSplit" title="Drag to resize · double-click to reset"></div>
+
+    <aside class="chat" id="chatPanel">
       <div class="chat-head">
         <div class="tabs" id="sideTabs">
           <button data-tab="chat" class="on">Claude</button>
@@ -48,10 +50,27 @@
       </div>
       <div class="history-view hidden" id="historyView"></div>
       <div class="composer">
+        <div class="composer-grip" id="composerGrip" title="Drag to resize · double-click to reset"></div>
         <div id="selChip" class="sel-chip hidden"><span class="sel-text"></span><button title="Detach selection">×</button></div>
         <textarea id="chatInput" rows="3" placeholder="Ask Claude…  (Enter to send, Shift+Enter for new line)"></textarea>
         <div class="composer-row">
-          <span id="modelName" class="muted small"></span>
+          <div class="chat-config">
+            <select id="modelSelect" title="Model">
+              <option value="">Default model</option>
+              <option value="fable">Fable</option>
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
+            </select>
+            <select id="effortSelect" title="Thinking effort">
+              <option value="">Default effort</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="xhigh">Extra high</option>
+              <option value="max">Max</option>
+            </select>
+          </div>
           <div class="composer-actions">
             <button id="chatMic" class="mic" type="button"></button>
             <button id="sendBtn" class="primary">Send</button>

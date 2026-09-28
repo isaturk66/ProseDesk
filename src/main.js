@@ -414,6 +414,67 @@ function setMode(m) {
 document.querySelectorAll('#modeToggle button').forEach(b => { b.onclick = () => setMode(b.dataset.mode) })
 setMode(mode)
 
+// Model and thinking effort. The choice is remembered here and sent to the
+// server on connect; the server restarts Claude on the next turn to apply it.
+const modelSelect = $('#modelSelect'), effortSelect = $('#effortSelect')
+function sendConfig() {
+  store.set('prosedesk.model', modelSelect.value)
+  store.set('prosedesk.effort', effortSelect.value)
+  wsSend({ type: 'chat-config', model: modelSelect.value, effort: effortSelect.value })
+}
+function showConfig({ model, effort }) {
+  for (const [sel, v] of [[modelSelect, model], [effortSelect, effort]]) {
+    if (v && ![...sel.options].some(o => o.value === v)) sel.add(new Option(v, v))
+    sel.value = v || ''
+  }
+}
+modelSelect.onchange = effortSelect.onchange = sendConfig
+
+// ------------------------------------------------------------------ resizing
+// Drag the bar left of the chat to widen it, and the grip above the input to
+// make it taller. Double-click either one to reset.
+function dragResize(handle, { axis, get, set, reset }) {
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const start = axis === 'x' ? e.clientX : e.clientY, from = get()
+    handle.setPointerCapture(e.pointerId)
+    document.body.classList.add(`resizing-${axis}`)
+    const move = ev => set(from + start - (axis === 'x' ? ev.clientX : ev.clientY))
+    const up = () => {
+      handle.removeEventListener('pointermove', move)
+      document.body.classList.remove(`resizing-${axis}`)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up, { once: true })
+    handle.addEventListener('pointercancel', up, { once: true })
+  })
+  handle.addEventListener('dblclick', reset)
+}
+
+const chatPanel = $('#chatPanel'), chatInput = $('#chatInput')
+function setChatWidth(w, save = true) {
+  w = Math.round(Math.max(300, Math.min(w, innerWidth - 360)))
+  chatPanel.style.width = `${w}px`
+  if (save) store.set('prosedesk.chatWidth', w)
+}
+function setInputHeight(h, save = true) {
+  const max = Math.max(80, chatPanel.clientHeight - 220)
+  h = Math.round(Math.max(60, Math.min(h, max)))
+  chatInput.style.height = `${h}px`
+  if (save) store.set('prosedesk.inputHeight', h)
+}
+dragResize($('#chatSplit'), {
+  axis: 'x', get: () => chatPanel.offsetWidth, set: setChatWidth,
+  reset: () => { chatPanel.style.width = ''; store.set('prosedesk.chatWidth', '') },
+})
+dragResize($('#composerGrip'), {
+  axis: 'y', get: () => chatInput.offsetHeight, set: setInputHeight,
+  reset: () => { chatInput.style.height = ''; store.set('prosedesk.inputHeight', '') },
+})
+if (+store.get('prosedesk.chatWidth', 0)) setChatWidth(+store.get('prosedesk.chatWidth'), false)
+if (+store.get('prosedesk.inputHeight', 0)) setInputHeight(+store.get('prosedesk.inputHeight'), false)
+
 // ------------------------------------------------------------------ Ctrl+K inline prompt
 const cmdk = $('#cmdk')
 const cmdkInput = cmdk.querySelector('input')
@@ -702,7 +763,11 @@ function wsSend(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)) }
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`)
-  ws.onopen = () => $('#saveStatus').textContent = ''
+  ws.onopen = () => {
+    $('#saveStatus').textContent = ''
+    const model = store.get('prosedesk.model', null), effort = store.get('prosedesk.effort', null)
+    if (model !== null || effort !== null) wsSend({ type: 'chat-config', model: model || '', effort: effort || '' })
+  }
   ws.onclose = () => {
     $('#saveStatus').textContent = 'Disconnected — retrying…'
     if (busy) endTurn('Connection lost.')
@@ -723,7 +788,8 @@ function connect() {
         explorer.error(msg.error)
         break
       case 'mkdir-done': explorer.folderCreated(msg.path); break
-      case 'chat-meta': $('#modelName').textContent = msg.model || ''; break
+      case 'chat-meta': modelSelect.title = `Model: ${msg.model || 'default'}`; break
+      case 'chat-config': showConfig(msg); break
       case 'chat-block': newSegment(); break
       case 'chat-delta': appendDelta(msg.text); break
       case 'chat-tool': addTool(msg.name, msg.target); break
